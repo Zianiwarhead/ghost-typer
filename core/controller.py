@@ -8,6 +8,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from typing import ClassVar
 
 from pynput import keyboard as kb
 
@@ -53,7 +54,7 @@ class SessionController:
         """Records an imminent synthetic press. Engine passes a normalized id
         ('key:backspace', 'key:enter', or the lowercase char); None matches
         any key within the window (backward compatible)."""
-        self._own_emits.append((time.time(), key_id))
+        self._own_emits.append((time.time(), self._canon(key_id)))
 
     def save_session(self, text: str, profile: dict) -> None:
         """Call when a fresh typing run begins."""
@@ -146,6 +147,19 @@ class SessionController:
     #  INTERFERENCE GUARD — pause if the human physically types mid-run   #
     # ------------------------------------------------------------------ #
 
+    # Canonical aliases: what Controller emits vs what Listener hears can
+    # differ. Known case: Controller.type(' ') presses the physical spacebar,
+    # which the listener reports as Key.space, not KeyCode(' '). Both sides
+    # pass through _canon() so they always meet. Add entries here if the
+    # pause-debug line ever names another mismatched key.
+    _KEY_CANON: ClassVar[dict] = {
+        'key:space': ' ',
+    }
+
+    @classmethod
+    def _canon(cls, kid):
+        return cls._KEY_CANON.get(kid, kid)
+
     @staticmethod
     def _ignored_keys() -> frozenset:
         """Modifier / control keys that never count as interference."""
@@ -179,7 +193,7 @@ class SessionController:
             self._own_emits.popleft()
         if not self._own_emits:
             return False
-        kid = self._key_id(key)
+        kid = self._canon(self._key_id(key))
         if kid is None:
             # Can't identify what was pressed, but we're actively emitting —
             # almost certainly our own unicode/special press. Fail open.

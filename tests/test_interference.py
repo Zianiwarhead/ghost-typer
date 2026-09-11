@@ -61,6 +61,17 @@ def test_marked_backspace_is_ignored_unmarked_is_not():
     assert c2._handle_key_press(Key.backspace) is True
 
 
+def test_space_heard_as_key_space_matches_mark():
+    # Listener reports our typed space as Key.space, not KeyCode(' ').
+    c = _typing_controller()
+    c.mark_own_emit(' ')
+    assert c._handle_key_press(Key.space) is False
+    assert c.pause_flag[0] is False
+    c2 = _typing_controller()
+    assert c2._handle_key_press(Key.space) is True
+    assert c2.pause_flag[0] is True
+
+
 def test_no_pause_when_not_typing_or_paused():
     c = SessionController()  # no thread -> not typing
     assert c._handle_key_press(KeyCode(char='z')) is False
