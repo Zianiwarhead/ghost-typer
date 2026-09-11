@@ -30,4 +30,6 @@ def test_no_resume_when_finished_or_empty():
 def test_mark_own_emit_does_not_crash():
     c = SessionController()
     c.mark_own_emit()
-    assert c._last_own_emit > 0
+    c.mark_own_emit('q')
+    c.mark_own_emit('key:backspace')
+    assert len(c._own_emits) == 3

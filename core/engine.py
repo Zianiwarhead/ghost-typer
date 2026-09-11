@@ -96,6 +96,27 @@ class TypingEngine:
         self.current_index = total
         return True
 
+    def _mark(self, key_id: str | None) -> None:
+        """Tells the interference guard (via emit_hook) that the next heard
+        press is ours. Tolerates legacy zero-arg hooks."""
+        if self.emit_hook is None:
+            return
+        try:
+            self.emit_hook(key_id)
+        except TypeError:
+            try:
+                self.emit_hook()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _tap(self, key, key_id: str) -> None:
+        """Marked press+release of a special key (backspace, enter)."""
+        self._mark(key_id)
+        self.keyboard.press(key)
+        self.keyboard.release(key)
+
     def _type_char(self, char: str, current_word: str = '') -> None:
         if self._should_make_typo(char):
             self._type_with_correction(char)
@@ -110,8 +131,7 @@ class TypingEngine:
             wrong = wrong.upper()
         self._press_char(wrong)
         time.sleep(random.uniform(0.08, 0.22))
-        self.keyboard.press(Key.backspace)
-        self.keyboard.release(Key.backspace)
+        self._tap(Key.backspace, 'key:backspace')
         time.sleep(random.uniform(0.12, 0.28))
         self._press_char(char)
 
@@ -121,8 +141,7 @@ class TypingEngine:
             time.sleep(random.uniform(0.04, 0.10))
         time.sleep(random.uniform(0.15, 0.35))
         for _ in typo_word:
-            self.keyboard.press(Key.backspace)
-            self.keyboard.release(Key.backspace)
+            self._tap(Key.backspace, 'key:backspace')
             time.sleep(random.uniform(0.04, 0.09))
         time.sleep(random.uniform(0.10, 0.20))
         for ch in correct_word:
@@ -131,25 +150,22 @@ class TypingEngine:
 
     def _press_char(self, char: str) -> None:
         """Low-level key press with safe handling of special characters."""
-        if self.emit_hook is not None:
-            try:
-                self.emit_hook()
-            except Exception:
-                pass
-
-        # Always skip carriage return
+        # Always skip carriage return (emits nothing — mark nothing)
         if char == '\r':
             return
 
         # Tab key would move focus / click buttons — convert to spaces
         if char == '\t':
+            self._mark(' ')
             self.keyboard.type('    ')  # 4 spaces, safe everywhere
             return
 
         # Newline handling
         if char == '\n':
+            self._mark('key:enter')
             if self.profile.get('chat_mode', False):
                 # Shift+Enter = newline without submitting in chat UIs
+                # (shift itself is in the interference guard's ignore set)
                 with self.keyboard.pressed(Key.shift):
                     self.keyboard.press(Key.enter)
                     self.keyboard.release(Key.enter)
@@ -160,6 +176,7 @@ class TypingEngine:
             return
 
         # Everything else — letters, numbers, punctuation, symbols
+        self._mark(char.lower())
         self.keyboard.type(char)
 
     def _calculate_delay(self, char: str, current_word: str = '') -> float:

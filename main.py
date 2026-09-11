@@ -55,6 +55,7 @@ USAGE EXAMPLES:
   python main.py --wpm 90 --no-errors     # Quick overrides (10-200)
   python main.py --countdown 8            # Longer countdown (default: 5)
   python main.py --no-focus-lock          # Disable window focus guard
+  python main.py --no-interference        # Disable auto-pause on your own typing
 """
 
 # ------------------------------------------------------------------ #
@@ -96,6 +97,7 @@ def run_typing_session(
     controller: SessionController,
     use_focus_lock: bool = True,
     start_index: int = 0,
+    use_interference: bool = True,
 ) -> None:
     """Runs inside the background typing thread. Supports resume via start_index."""
 
@@ -123,7 +125,8 @@ def run_typing_session(
 
     # --- Engine (emit_hook feeds the interference guard) ---
     engine = TypingEngine(profile, controller.stop_flag, emit_hook=controller.mark_own_emit)
-    controller.start_interference_watch()
+    if use_interference:
+        controller.start_interference_watch()
 
     est = estimate_time(text[start_index:], profile['wpm'])
     resume_tag = f" (resuming from {start_index}/{len(text)})" if is_resume else ""
@@ -181,6 +184,8 @@ def parse_args():
                         help='Seconds before typing starts (default: 5)')
     parser.add_argument('--no-focus-lock', action='store_true',
                         help='Disable window focus guard')
+    parser.add_argument('--no-interference', action='store_true',
+                        help='Disable auto-pause when you physically type mid-run')
     parser.add_argument('--hard-stop', action='store_true',
                         help='Esc clears resume state instead of soft-stop')
     parser.add_argument('--chat-mode', action='store_true',
@@ -240,6 +245,7 @@ def main():
             sys.exit(1)
 
     use_focus_lock = not args.no_focus_lock
+    use_interference = not args.no_interference
 
     # Print info
     if static_text:
@@ -283,6 +289,7 @@ def main():
                 controller.last_profile,
                 controller,
                 use_focus_lock,
+                use_interference=use_interference,
             )
             return
         if controller.has_resume() and static_text is None:
@@ -299,6 +306,7 @@ def main():
                 controller.last_profile,
                 controller,
                 use_focus_lock,
+                use_interference=use_interference,
             )
             return
 
@@ -325,7 +333,8 @@ def main():
             source_text,
             profile,
             controller,
-            use_focus_lock
+            use_focus_lock,
+            use_interference=use_interference,
         )
 
     def on_stop(info=None) -> None:

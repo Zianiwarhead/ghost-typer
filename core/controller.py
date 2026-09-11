@@ -6,6 +6,7 @@ and physical-typing interference auto-pause.
 
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 
 from pynput import keyboard as kb
@@ -31,10 +32,12 @@ class SessionController:
         self.last_index: int = 0
         self.last_total: int = 0
 
-        # Own-keypress timestamps — engine calls mark_own_emit() before each
-        # synthetic press so the interference guard doesn't flag our own typing.
-        self._last_own_emit: float = 0.0
-        self._own_emit_window: float = 0.15
+        # Own-keypress ledger — engine calls mark_own_emit(key_id) before
+        # each synthetic press so the interference guard doesn't flag our
+        # own typing (including backspace corrections). Entries expire
+        # after _own_emit_window seconds. key_id None = wildcard (legacy).
+        self._own_emits: deque = deque(maxlen=32)
+        self._own_emit_window: float = 0.6
 
     # ------------------------------------------------------------------ #
     #  SESSION STATE / RESUME                                              #
@@ -46,8 +49,11 @@ class SessionController:
     def is_paused(self) -> bool:
         return bool(self.pause_flag[0])
 
-    def mark_own_emit(self) -> None:
-        self._last_own_emit = time.time()
+    def mark_own_emit(self, key_id: str | None = None) -> None:
+        """Records an imminent synthetic press. Engine passes a normalized id
+        ('key:backspace', 'key:enter', or the lowercase char); None matches
+        any key within the window (backward compatible)."""
+        self._own_emits.append((time.time(), key_id))
 
     def save_session(self, text: str, profile: dict) -> None:
         """Call when a fresh typing run begins."""
@@ -140,38 +146,69 @@ class SessionController:
     #  INTERFERENCE GUARD — pause if the human physically types mid-run   #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _ignored_keys() -> frozenset:
+        """Modifier / control keys that never count as interference."""
+        try:
+            from pynput.keyboard import Key
+            return frozenset({Key.ctrl, Key.ctrl_l, Key.ctrl_r, Key.alt, Key.alt_l,
+                              Key.alt_r, Key.shift, Key.shift_l, Key.shift_r, Key.esc})
+        except Exception:
+            return frozenset()
+
+    @staticmethod
+    def _key_id(key) -> str:
+        """Normalizes a pynput key to the id scheme engine marks use."""
+        try:
+            ch = getattr(key, 'char', None)
+            if ch:
+                return ch.lower()
+        except Exception:
+            pass
+        try:
+            return f"key:{key.name}"
+        except Exception:
+            return str(key)
+
+    def _is_own_press(self, key) -> bool:
+        """True if this press matches a recent synthetic emit (time + identity)."""
+        now = time.time()
+        while self._own_emits and now - self._own_emits[0][0] > self._own_emit_window:
+            self._own_emits.popleft()
+        kid = self._key_id(key)
+        for _, eid in self._own_emits:
+            if eid is None or eid == kid:
+                return True
+        return False
+
+    def _handle_key_press(self, key) -> bool:
+        """Core interference decision. Returns True if it paused (user typed)."""
+        if not self.is_typing() or self.pause_flag[0] or self.stop_flag[0]:
+            return False
+        try:
+            if key in self._ignored_keys():
+                return False
+        except Exception:
+            pass
+        if self._is_own_press(key):
+            return False
+        self.pause_flag[0] = True
+        print("\n  [PAUSED] You typed — auto-paused. Ctrl+Alt+P to resume.\n")
+        if self.on_interference is not None:
+            try:
+                self.on_interference()
+            except Exception:
+                pass
+        return True
+
     def start_interference_watch(self) -> None:
         """Auto-pause when a physical keypress (not our own) is detected."""
         if self._interference_listener is not None:
             return
-        try:
-            from pynput.keyboard import Key
-        except Exception:
-            return
-
-        ignored = set()
-        try:
-            ignored = {Key.ctrl, Key.ctrl_l, Key.ctrl_r, Key.alt, Key.alt_l,
-                       Key.alt_r, Key.shift, Key.shift_l, Key.shift_r, Key.esc}
-        except Exception:
-            pass
 
         def _on_press(key):
             try:
-                if not self.is_typing() or self.pause_flag[0] or self.stop_flag[0]:
-                    return
-                if key in ignored:
-                    return
-                # Our own synthetic presses just happened — ignore.
-                if time.time() - self._last_own_emit < self._own_emit_window:
-                    return
-                self.pause_flag[0] = True
-                print("\n  [PAUSED] You typed — auto-paused. Ctrl+Alt+P to resume.\n")
-                if self.on_interference is not None:
-                    try:
-                        self.on_interference()
-                    except Exception:
-                        pass
+                self._handle_key_press(key)
             except Exception:
                 pass
 
