@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# Build / dist
+build/
+dist/
+*.spec
+*.egg-info/
+
+# PyInstaller
+*.manifest
+
+# Tests / lint
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Ghost Typer local state
+*.log
+.ghost-typer/
+custom_profile.json

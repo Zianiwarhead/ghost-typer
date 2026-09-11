@@ -1,0 +1,12 @@
+{
+  "name": "My Custom Profile",
+  "description": "Edit this file to build your own typing style",
+  "wpm": 70,
+  "error_rate": 0.03,
+  "transposition_rate": 0.008,
+  "thinking_chance": 0.012,
+  "burst_chance": 0.05,
+  "fatigue_enabled": true,
+  "errors_enabled": true,
+  "mechanical": false
+}
