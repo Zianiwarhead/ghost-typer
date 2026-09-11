@@ -99,6 +99,44 @@ def test_unidentifiable_key_with_no_marks_is_interference():
     assert c.pause_flag[0] is True
 
 
+def test_ctrl_or_alt_held_press_is_never_interference():
+    # Hotkeys (Ctrl+Alt+P/S) and shortcuts (Ctrl+L, Ctrl+S) are not typing.
+    for mod in ('ctrl', 'alt'):
+        c = _typing_controller()
+        c._held_mods.add(mod)
+        assert c._handle_key_press(KeyCode(char='z')) is False
+        assert c.pause_flag[0] is False
+
+
+def test_shift_held_typing_still_counts():
+    # Capitals (shift+letter) ARE typing — shift is deliberately not tracked.
+    c = _typing_controller()
+    assert c._handle_key_press(KeyCode(char='A')) is True
+
+
+def test_mod_name_mapping():
+    assert SessionController._mod_name(Key.ctrl_l) == 'ctrl'
+    assert SessionController._mod_name(Key.ctrl_r) == 'ctrl'
+    assert SessionController._mod_name(Key.alt) == 'alt'
+    assert SessionController._mod_name(Key.shift) is None
+    assert SessionController._mod_name(KeyCode(char='a')) is None
+
+
+def test_display_key_names_control_chars():
+    assert SessionController._display_key('\x0c') == 'Ctrl+L'
+    assert SessionController._display_key('\x13') == 'Ctrl+S'
+    assert SessionController._display_key('a') == 'a'
+    assert SessionController._display_key(None) is None
+    assert SessionController._display_key('key:backspace') == 'key:backspace'
+
+
+def test_stop_watch_clears_held_mods():
+    c = _typing_controller()
+    c._held_mods.add('ctrl')
+    c.stop_interference_watch()
+    assert c._held_mods == set()
+
+
 def test_correction_marks_backspace(monkeypatch):
     patch_engine(monkeypatch)
     monkeypatch.setattr(time, "sleep", lambda s: None)

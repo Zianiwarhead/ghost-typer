@@ -39,6 +39,9 @@ class SessionController:
         # after _own_emit_window seconds. key_id None = wildcard (legacy).
         self._own_emits: deque = deque(maxlen=32)
         self._own_emit_window: float = 0.6
+        # Ctrl/Alt currently held down (maintained by the interference
+        # listener). Presses made with these held are shortcuts, not typing.
+        self._held_mods: set = set()
 
     # ------------------------------------------------------------------ #
     #  SESSION STATE / RESUME                                              #
@@ -186,6 +189,26 @@ class SessionController:
         except Exception:
             return None
 
+    @staticmethod
+    def _display_key(kid) -> str:
+        """Human-readable key id for the pause message ('\\x0c' -> Ctrl+L)."""
+        if isinstance(kid, str) and len(kid) == 1 and ord(kid) < 32:
+            return f"Ctrl+{chr(ord('A') + ord(kid) - 1)}"
+        return kid
+
+    @staticmethod
+    def _mod_name(key):
+        """'ctrl'/'alt' if key is that modifier (either side), else None."""
+        try:
+            from pynput.keyboard import Key
+            if key in (Key.ctrl, Key.ctrl_l, Key.ctrl_r):
+                return 'ctrl'
+            if key in (Key.alt, Key.alt_l, Key.alt_r):
+                return 'alt'
+        except Exception:
+            pass
+        return None
+
     def _is_own_press(self, key) -> bool:
         """True if this press matches a recent synthetic emit (time + identity)."""
         now = time.time()
@@ -212,6 +235,12 @@ class SessionController:
                 return False
         except Exception:
             pass
+        if self._held_mods:
+            # A shortcut (Ctrl/Alt held: hotkeys, Ctrl+S, Ctrl+L...) is not
+            # typing over our text — and this also stops our own resume
+            # hotkey press from re-pausing us in a race. Shift-held typing
+            # (capitals) still counts: shift is deliberately not tracked.
+            return False
         if self._is_own_press(key):
             return False
         try:
@@ -220,7 +249,8 @@ class SessionController:
         except Exception:
             newest_age, ledger = None, []
         self.pause_flag[0] = True
-        print(f"\n  [PAUSED] You typed {self._key_id(key)!r} — auto-paused. Ctrl+Alt+P to resume.")
+        kid = self._display_key(self._key_id(key))
+        print(f"\n  [PAUSED] You typed {kid!r} — auto-paused. Ctrl+Alt+P to resume.")
         print(f"  (debug: newest own mark {newest_age if newest_age is None else f'{newest_age:.2f}s ago'}; ledger={ledger})")
         if self.on_interference is not None:
             try:
@@ -236,12 +266,24 @@ class SessionController:
 
         def _on_press(key):
             try:
+                mod = self._mod_name(key)
+                if mod is not None:
+                    self._held_mods.add(mod)
+                    return
                 self._handle_key_press(key)
             except Exception:
                 pass
 
+        def _on_release(key):
+            try:
+                mod = self._mod_name(key)
+                if mod is not None:
+                    self._held_mods.discard(mod)
+            except Exception:
+                pass
+
         try:
-            listener = kb.Listener(on_press=_on_press, daemon=True)
+            listener = kb.Listener(on_press=_on_press, on_release=_on_release, daemon=True)
             listener.start()
             self._interference_listener = listener
         except Exception:
@@ -255,6 +297,7 @@ class SessionController:
             pass
         finally:
             self._interference_listener = None
+            self._held_mods.clear()
 
     # ------------------------------------------------------------------ #
     #  HOTKEYS — using GlobalHotKeys (reliable on Windows)               #
