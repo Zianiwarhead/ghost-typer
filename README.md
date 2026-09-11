@@ -56,7 +56,9 @@ First, clone the repo and **change into its folder** — every command below
 must run from there (not from `System32` or your home folder):
 
 ```powershell
-# Windows
+# Windows (use a NORMAL terminal, not Administrator —
+# Admin shells start in C:\WINDOWS\System32, which is write-protected)
+cd ~   # or: cd Documents — just get out of System32 first
 git clone https://github.com/Zianiwarhead/ghost-typer.git
 cd ghost-typer
 pip install -e .          # or: pip install -r requirements.txt
