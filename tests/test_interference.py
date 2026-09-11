@@ -75,6 +75,19 @@ def test_modifiers_never_count():
     assert c.pause_flag[0] is False
 
 
+def test_unidentifiable_key_fails_open_with_recent_mark():
+    c = _typing_controller()
+    c.mark_own_emit('e')
+    assert c._handle_key_press(object()) is False
+    assert c.pause_flag[0] is False
+
+
+def test_unidentifiable_key_with_no_marks_is_interference():
+    c = _typing_controller()
+    assert c._handle_key_press(object()) is True
+    assert c.pause_flag[0] is True
+
+
 def test_correction_marks_backspace(monkeypatch):
     patch_engine(monkeypatch)
     monkeypatch.setattr(time, "sleep", lambda s: None)

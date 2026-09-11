@@ -33,7 +33,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.0.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.1.2  (soft-stop + resume)
 """
 
 HELP_TEXT = """

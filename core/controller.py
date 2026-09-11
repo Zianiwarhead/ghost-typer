@@ -157,25 +157,33 @@ class SessionController:
             return frozenset()
 
     @staticmethod
-    def _key_id(key) -> str:
-        """Normalizes a pynput key to the id scheme engine marks use."""
+    def _key_id(key):
+        """Normalizes a pynput key to the id scheme engine marks use.
+        Returns None for unidentifiable keys (e.g. unicode delivered via
+        VK_PACKET, which listeners may report with char=None)."""
         try:
             ch = getattr(key, 'char', None)
             if ch:
-                return ch.lower()
+                return ch.casefold()
         except Exception:
             pass
         try:
             return f"key:{key.name}"
         except Exception:
-            return str(key)
+            return None
 
     def _is_own_press(self, key) -> bool:
         """True if this press matches a recent synthetic emit (time + identity)."""
         now = time.time()
         while self._own_emits and now - self._own_emits[0][0] > self._own_emit_window:
             self._own_emits.popleft()
+        if not self._own_emits:
+            return False
         kid = self._key_id(key)
+        if kid is None:
+            # Can't identify what was pressed, but we're actively emitting —
+            # almost certainly our own unicode/special press. Fail open.
+            return True
         for _, eid in self._own_emits:
             if eid is None or eid == kid:
                 return True
@@ -192,8 +200,14 @@ class SessionController:
             pass
         if self._is_own_press(key):
             return False
+        try:
+            newest_age = time.time() - self._own_emits[-1][0] if self._own_emits else None
+            ledger = [eid for _, eid in list(self._own_emits)[-8:]]
+        except Exception:
+            newest_age, ledger = None, []
         self.pause_flag[0] = True
-        print("\n  [PAUSED] You typed — auto-paused. Ctrl+Alt+P to resume.\n")
+        print(f"\n  [PAUSED] You typed {self._key_id(key)!r} — auto-paused. Ctrl+Alt+P to resume.")
+        print(f"  (debug: newest own mark {newest_age if newest_age is None else f'{newest_age:.2f}s ago'}; ledger={ledger})")
         if self.on_interference is not None:
             try:
                 self.on_interference()
