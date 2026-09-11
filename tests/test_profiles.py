@@ -2,9 +2,9 @@ from core.profiles import PROFILE_ORDER, clamp_wpm, get_profile, validate_profil
 
 
 def test_new_presets_exist():
-    for name in ["sluggish", "normal", "fast", "superfast", "typewriter"]:
+    for name in ["sluggish", "normal", "fast", "superfast", "typewriter", "insane"]:
         p = get_profile(name)
-        assert 10 <= p["wpm"] <= 200
+        assert 10 <= p["wpm"] <= 300
 
 
 def test_preset_wpm_values():
@@ -13,6 +13,7 @@ def test_preset_wpm_values():
     assert get_profile("fast")["wpm"] == 105
     assert get_profile("superfast")["wpm"] == 150
     assert get_profile("typewriter")["wpm"] == 80
+    assert get_profile("insane")["wpm"] == 300
 
 
 def test_typewriter_is_mechanical_no_burst():
@@ -23,7 +24,7 @@ def test_typewriter_is_mechanical_no_burst():
 
 def test_clamp_wpm():
     assert clamp_wpm(5) == 10
-    assert clamp_wpm(500) == 200
+    assert clamp_wpm(500) == 300
     assert clamp_wpm(90) == 90
 
 

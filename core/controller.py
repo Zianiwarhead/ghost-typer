@@ -32,6 +32,8 @@ class SessionController:
         self.last_profile: dict | None = None
         self.last_index: int = 0
         self.last_total: int = 0
+        self.last_word_index: int = 0
+        self.last_word_total: int = 0
 
         # Own-keypress ledger — engine calls mark_own_emit(key_id) before
         # each synthetic press so the interference guard doesn't flag our
@@ -66,9 +68,14 @@ class SessionController:
         self.last_index = 0
         self.last_total = len(text)
 
-    def update_index(self, current: int, total: int) -> None:
+    def update_index(self, current: int, total: int,
+                       word_current: int | None = None, word_total: int | None = None) -> None:
         self.last_index = max(0, int(current))
         self.last_total = max(0, int(total))
+        if word_current is not None:
+            self.last_word_index = max(0, int(word_current))
+        if word_total is not None:
+            self.last_word_total = max(0, int(word_total))
 
     def has_resume(self) -> bool:
         return (
@@ -84,6 +91,8 @@ class SessionController:
         return {
             "index": self.last_index,
             "total": self.last_total,
+            "word_index": self.last_word_index,
+            "word_total": self.last_word_total,
             "remaining_preview": remaining,
             "profile_name": (self.last_profile or {}).get("name", "Custom"),
         }
@@ -98,6 +107,8 @@ class SessionController:
         self.last_profile = None
         self.last_index = 0
         self.last_total = 0
+        self.last_word_index = 0
+        self.last_word_total = 0
 
     def start_session(self, fn: Callable, *args, **kwargs) -> None:
         """Runs fn in a background daemon thread (fresh start)."""

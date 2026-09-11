@@ -14,7 +14,7 @@ MIT open source — use it, share it, be happy.
 
 ## Features
 
-- **Speed presets:** Sluggish 25 / Casual 45 / Normal 65 / Fast 105 / Super Fast 150 WPM + custom slider 10–200
+- **Speed presets:** Sluggish 25 / Casual 45 / Normal 65 / Fast 105 / Super Fast 150 / Insane 300 WPM + custom slider 10–300
 - **Typewriter mode (~80 WPM):** steady mechanical rhythm, carriage-return pause on newlines, no bursts
 - **Humanization:** WPM jitter, burst typing, thinking pauses, fatigue slowdown, fast common words
 - **Typos that fix themselves:** neighbor-key errors + word transpositions (`teh → the`)
@@ -108,14 +108,15 @@ python main.py --build-profile --custom myprofile.json
 | expert | 120 | accurate programmer |
 | typewriter | 80 | mechanical, steady, newline clunk |
 | flawless | 70 | zero typos |
+| insane | 300 | ludicrous speed, no errors or pauses |
 
-Fine-tune with `--wpm N` (10–200) and `--no-errors`.
+Fine-tune with `--wpm N` (10–300) and `--no-errors`.
 
 ## Resume model
 
-- Typing is index-tracked. Pause/focus-loss/user-typing keeps the index.
+- Typing is char- and word-tracked (`342/1200 chars, word 58/200`). Pause/focus-loss/user-typing keeps the place.
 - `Esc` = **soft-stop**: session kept in memory, GUI/CLI shows `Stopped at X/Y`.
-- Press Start again to resume from X. Restart only if you load new text.
+- Press Start again to resume from X — snapped back to the word start, so a half-typed word retypes cleanly instead of resuming mid-word. Restart only if you load new text.
 - True "scan the target app to find the caret" is intentionally **not** attempted
   (fragile OCR/UI-automation) — index-based resume is exact and predictable.
 

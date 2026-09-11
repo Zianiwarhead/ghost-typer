@@ -128,16 +128,28 @@ PROFILES = {
         "errors_enabled": False,
         "mechanical": False,
     },
+    "insane": {
+        "name": "Insane",
+        "description": "Ludicrous speed ~300 WPM, no errors, pauses, or fatigue",
+        "wpm": 300,
+        "error_rate": 0.0,
+        "transposition_rate": 0.0,
+        "thinking_chance": 0.0,
+        "burst_chance": 0.0,
+        "fatigue_enabled": False,
+        "errors_enabled": False,
+        "mechanical": False,
+    },
 }
 
 # Canonical user-facing order for GUI / --list-profiles
 PROFILE_ORDER = [
     "sluggish", "hunt_and_peck", "casual", "normal", "average",
-    "typewriter", "fast", "expert", "superfast", "flawless",
+    "typewriter", "fast", "expert", "superfast", "flawless", "insane",
 ]
 
 WPM_MIN = 10
-WPM_MAX = 200
+WPM_MAX = 300
 
 
 def clamp_wpm(wpm: int) -> int:

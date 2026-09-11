@@ -3,7 +3,9 @@ engine.py — The heart of GhostTyper.
 Handles all keystroke simulation logic: timing, typos, fatigue, bursts.
 """
 
+import bisect
 import random
+import re
 import time
 
 from pynput.keyboard import Controller, Key
@@ -34,6 +36,25 @@ TRANSPOSITIONS = {
 }
 
 
+def snap_to_word_start(text: str, index: int) -> int:
+    """Snaps a resume index back to the start of the word it lands inside.
+
+    A soft-stop mid-word would otherwise resume mid-word; retyping the whole
+    word is cleaner. Indexes on whitespace, at word starts, or at the ends
+    are returned untouched.
+    """
+    index = max(0, min(index, len(text)))
+    if 0 < index < len(text) and not text[index - 1].isspace() and not text[index].isspace():
+        while index > 0 and not text[index - 1].isspace():
+            index -= 1
+    return index
+
+
+def count_words(text: str) -> int:
+    """Number of whitespace-separated tokens (the 'word 42/300' total)."""
+    return len(re.findall(r'\S+', text))
+
+
 class TypingEngine:
     def __init__(self, profile: dict, stop_flag: list, emit_hook=None):
         self.profile = profile
@@ -47,10 +68,21 @@ class TypingEngine:
         # Resume tracking — index into the *full* text of chars fully completed.
         self.current_index = 0
         self.total = 0
+        # Word tracking — spans of non-whitespace for the "word 42/300" view.
+        self.word_index = 0
+        self.word_total = 0
+        self._word_ends: list = []
 
     def get_progress(self) -> tuple:
         """Returns (current_index, total) for Resume UI."""
         return (self.current_index, self.total)
+
+    def get_word_progress(self) -> tuple:
+        """Returns (words_completed, word_total)."""
+        return (self.word_index, self.word_total)
+
+    def _sync_word_index(self) -> None:
+        self.word_index = bisect.bisect_right(self._word_ends, self.current_index)
 
     def get_remaining_text(self, text: str) -> str:
         """Text not yet typed (for preview / copy-remaining)."""
@@ -62,10 +94,14 @@ class TypingEngine:
     def type_text(self, text: str, progress_callback=None, start_index: int = 0) -> bool:
         total = len(text)
         self.total = total
-        # Clamp resume point; preserve fatigue curve across resumes.
-        i = max(0, min(start_index, total))
+        self._word_ends = [m.end() for m in re.finditer(r'\S+', text)]
+        self.word_total = len(self._word_ends)
+        # Clamp resume point, snap mid-word stops to the word start, and
+        # preserve the fatigue curve across resumes.
+        i = snap_to_word_start(text, max(0, min(start_index, total))) if start_index > 0 else 0
         self.current_index = i
         self.chars_typed = i
+        self._sync_word_index()
         self._update_fatigue(force=True)
         while i < len(text):
             if self.stop_flag[0]:
@@ -88,12 +124,14 @@ class TypingEngine:
                 self.chars_typed += 1
 
             self.current_index = i
+            self._sync_word_index()
             self._update_fatigue()
 
             if progress_callback:
                 progress_callback(min(i, total), total)
 
         self.current_index = total
+        self._sync_word_index()
         return True
 
     def _mark(self, key_id: str | None) -> None:

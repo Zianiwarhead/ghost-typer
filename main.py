@@ -33,7 +33,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.1.4  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.2.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -52,7 +52,7 @@ USAGE EXAMPLES:
   python main.py --list-profiles          # Show all presets
   python main.py --custom myprofile.json  # Load saved custom profile
   python main.py --build-profile          # Create a custom profile
-  python main.py --wpm 90 --no-errors     # Quick overrides (10-200)
+  python main.py --wpm 90 --no-errors     # Quick overrides (10-300)
   python main.py --countdown 8            # Longer countdown (default: 5)
   python main.py --no-focus-lock          # Disable window focus guard
   python main.py --no-interference        # Disable auto-pause on your own typing
@@ -62,14 +62,17 @@ USAGE EXAMPLES:
 #  PROGRESS                                                            #
 # ------------------------------------------------------------------ #
 
-def make_progress_bar(current: int, total: int, width: int = 30) -> str:
+def make_progress_bar(current: int, total: int, width: int = 30, words: tuple | None = None) -> str:
     pct = current / total if total > 0 else 0
     filled = int(width * pct)
     bar = "#" * filled + "-" * (width - filled)
-    return f"[{bar}] {int(pct*100):>3}%  ({current}/{total} chars)"
+    s = f"[{bar}] {int(pct*100):>3}%  ({current}/{total} chars"
+    if words is not None:
+        s += f", word {words[0]}/{words[1]}"
+    return s + ")"
 
-def print_progress(current: int, total: int) -> None:
-    print(f"\r  {make_progress_bar(current, total)}", end='', flush=True)
+def print_progress(current: int, total: int, words: tuple | None = None) -> None:
+    print(f"\r  {make_progress_bar(current, total, words=words)}", end='', flush=True)
 
 # ------------------------------------------------------------------ #
 #  COUNTDOWN                                                           #
@@ -138,8 +141,9 @@ def run_typing_session(
 
     def progress(current: int, total: int) -> None:
         controller.wait_if_paused()
-        controller.update_index(current, total)
-        print_progress(current, total)
+        w = engine.get_word_progress()
+        controller.update_index(current, total, w[0], w[1])
+        print_progress(current, total, words=w)
 
     success = engine.type_text(text, progress_callback=progress, start_index=start_index)
 
@@ -151,7 +155,8 @@ def run_typing_session(
         print("\n  [Done]\n")
     else:
         info = controller.get_resume_info()
-        print(f"\n  [Soft-stopped at {info['index']}/{info['total']}]")
+        print(f"\n  [Soft-stopped at {info['index']}/{info['total']} chars "
+              f"(word {info['word_index']}/{info['word_total']}, resumes at word start)]")
         print(f"  Press Ctrl+Alt+S to resume. Next: '{info['remaining_preview']}'\n")
 
 # ------------------------------------------------------------------ #
@@ -174,7 +179,7 @@ def parse_args():
     profile_group.add_argument('--profile', '-p', metavar='NAME', default='normal')
     profile_group.add_argument('--custom', '-c', metavar='PATH')
 
-    parser.add_argument('--wpm', type=int, help='Override WPM (10-200)')
+    parser.add_argument('--wpm', type=int, help='Override WPM (10-300)')
     parser.add_argument('--no-errors', action='store_true')
     parser.add_argument('--list-profiles', action='store_true')
     parser.add_argument('--build-profile', action='store_true')
@@ -279,7 +284,7 @@ def main():
         # Resume path: same text, continue from last_index (no countdown repeat? keep short one)
         if controller.has_resume() and static_text is not None:
             info = controller.get_resume_info()
-            print(f"\n  Resuming from {info['index']}/{info['total']} — '{info['remaining_preview']}'")
+            print(f"\n  Resuming from char {info['index']}/{info['total']} (word {info['word_index']}/{info['word_total']}) — '{info['remaining_preview']}'")
             run_countdown(max(2, min(args.countdown, 3)))
             if controller.stop_flag[0]:
                 return
@@ -343,7 +348,7 @@ def main():
             print("\n  [Stopped — resume cleared (--hard-stop)].\n")
             return
         if isinstance(info, dict) and info.get("total"):
-            print(f"\n  [Soft-stopped at {info['index']}/{info['total']}] — Ctrl+Alt+S resumes.\n")
+            print(f"\n  [Soft-stopped at char {info['index']}/{info['total']} (word {info['word_index']}/{info['word_total']})] — Ctrl+Alt+S resumes.\n")
         else:
             print("\n  [Soft-stopped] — Ctrl+Alt+S resumes.\n")
 

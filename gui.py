@@ -34,7 +34,7 @@ def _load_icon(root: tk.Tk) -> None:
 class GhostTyperApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ghost Typer v2.1.4 — human-like typing")
+        self.title("Ghost Typer v2.2.0 — human-like typing")
         self.geometry("560x620")
         self.resizable(True, True)
         _load_icon(self)
@@ -183,7 +183,7 @@ class GhostTyperApp(tk.Tk):
         # Resume path keeps the original buffer.
         if self.controller.has_resume():
             info = self.controller.get_resume_info()
-            self._set_status(f"Resuming from {info['index']}/{info['total']}… click target box!")
+            self._set_status(f"Resuming from word {info['word_index']}/{info['word_total']}… click target box!")
             threading.Thread(target=self._countdown_then_resume, daemon=True).start()
             return
         text = self._current_text()
@@ -254,7 +254,8 @@ class GhostTyperApp(tk.Tk):
 
         def progress(cur, tot):
             controller.wait_if_paused()
-            controller.update_index(cur, tot)
+            w = engine.get_word_progress()
+            controller.update_index(cur, tot, w[0], w[1])
 
         ok = engine.type_text(text, progress_callback=progress, start_index=start_index)
         try:
@@ -267,7 +268,8 @@ class GhostTyperApp(tk.Tk):
         else:
             info = controller.get_resume_info()
             self._status_msg.set(
-                f"Soft-stopped at {info['index']}/{info['total']}. "
+                f"Soft-stopped at char {info['index']}/{info['total']} "
+                f"(word {info['word_index']}/{info['word_total']}). "
                 f"Press Start to resume. Next: '{info['remaining_preview']}'"
             )
 
@@ -278,7 +280,7 @@ class GhostTyperApp(tk.Tk):
     def on_stop_btn(self):
         info = self.controller.stop_session(soft=True)
         if info.get("total"):
-            self._set_status(f"Soft-stopped at {info['index']}/{info['total']} — Start resumes.")
+            self._set_status(f"Soft-stopped at word {info['word_index']}/{info['word_total']} — Start resumes.")
         else:
             self._set_status("Stopped.")
 
@@ -290,7 +292,8 @@ class GhostTyperApp(tk.Tk):
                 pct = (idx / total) * 100
                 self._progress_var.set(pct)
                 if self.controller.is_typing():
-                    self._set_status(f"Typing… {idx}/{total} chars ({pct:.0f}%) — {preview_text(self.controller.last_text[idx:idx+60])}")
+                    wi, wt = self.controller.last_word_index, self.controller.last_word_total
+                    self._set_status(f"Typing… {idx}/{total} chars, word {wi}/{wt} ({pct:.0f}%) — {preview_text(self.controller.last_text[idx:idx+60])}")
             else:
                 # Show estimate for fresh text
                 txt = self._current_text()
