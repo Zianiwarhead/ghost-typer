@@ -52,8 +52,13 @@ security restriction, not something a workaround can fix.
 
 ## Quick start
 
+First, clone the repo and **change into its folder** — every command below
+must run from there (not from `System32` or your home folder):
+
 ```powershell
 # Windows
+git clone https://github.com/Zianiwarhead/ghost-typer.git
+cd ghost-typer
 pip install -e .          # or: pip install -r requirements.txt
 python main.py --list-profiles
 python main.py --profile normal
@@ -62,11 +67,18 @@ python main.py --gui      # Tk mini-GUI (recommended)
 
 ```bash
 # macOS / Linux
+git clone https://github.com/Zianiwarhead/ghost-typer.git
+cd ghost-typer
 pip3 install -e .         # or: pip3 install -r requirements.txt
 python3 main.py --list-profiles
 python3 main.py --profile normal
 python3 main.py --gui     # Tk mini-GUI (recommended)
 ```
+
+> **Wrong-folder errors?** If you see `does not appear to be a Python project`
+> or `can't open file '...main.py'`, your terminal is in the wrong directory
+> (e.g. `C:\WINDOWS\System32`). `cd` into the `ghost-typer` folder first —
+> `pip install -e .` means "install the project *in this folder*".
 
 1. Copy text (or pick a file in GUI).
 2. Click your target box during the 5s countdown.
