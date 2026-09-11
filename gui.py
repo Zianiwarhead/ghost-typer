@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 
 from core.controller import SessionController
 from core.engine import TypingEngine
-from core.focus_guard import WIN32_AVAILABLE, FocusGuard
+from core.focus_guard import BACKEND_AVAILABLE, FocusGuard
 from core.inputs import estimate_time, preview_text
 from core.profiles import PROFILE_ORDER, PROFILES, WPM_MAX, WPM_MIN, clamp_wpm, get_profile
 
@@ -243,7 +243,7 @@ class GhostTyperApp(tk.Tk):
             controller.last_total = len(text)
             controller.update_index(start_index, len(text))
         focus_guard = FocusGuard(controller.pause_flag, controller.stop_flag)
-        if use_focus_lock and WIN32_AVAILABLE:
+        if use_focus_lock and BACKEND_AVAILABLE:
             try:
                 focus_guard.lock_to_current_window()
                 focus_guard.start_watching()

@@ -8,7 +8,7 @@ import time
 
 from core.controller import SessionController
 from core.engine import TypingEngine
-from core.focus_guard import WIN32_AVAILABLE, FocusGuard
+from core.focus_guard import BACKEND_AVAILABLE, FocusGuard
 from core.inputs import (
     estimate_time,
     get_from_clipboard,
@@ -102,14 +102,13 @@ def run_typing_session(
     # --- Focus guard setup ---
     focus_guard = FocusGuard(controller.pause_flag, controller.stop_flag)
 
-    if use_focus_lock and WIN32_AVAILABLE:
+    if use_focus_lock and BACKEND_AVAILABLE:
         target_title = focus_guard.lock_to_current_window()
         focus_guard.start_watching()
         print(f"  Locked to: '{target_title}'")
         print("  Switch away -> auto-pause. Return -> auto-resume.\n")
-    elif use_focus_lock and not WIN32_AVAILABLE:
-        print("  Focus lock unavailable (pywin32 not installed).")
-        print("  Run: pip install pywin32\n")
+    elif use_focus_lock and not BACKEND_AVAILABLE:
+        print(f"  Focus lock unavailable ({focus_guard.unavailable_reason}).\n")
 
     # Fresh start vs resume bookkeeping
     is_resume = start_index > 0
@@ -253,7 +252,7 @@ def main():
 
     print(f"  Profile    : {profile.get('name')} ({profile['wpm']} WPM)")
     print(f"  Countdown  : {args.countdown}s")
-    print(f"  Focus lock : {'on (auto-pause on window switch)' if use_focus_lock and WIN32_AVAILABLE else 'off'}")
+    print(f"  Focus lock : {'on (auto-pause on window switch)' if use_focus_lock and BACKEND_AVAILABLE else 'off'}")
     print(f"  Stop mode  : {'hard-stop (Esc clears resume)' if args.hard_stop else 'soft-stop (Esc keeps place for resume)'}")
     print(f"  Newlines   : {'Shift+Enter (chat mode)' if args.chat_mode else 'Enter (normal mode — Word, Notepad, Docs)'}")
     print()
