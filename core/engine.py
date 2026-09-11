@@ -10,6 +10,8 @@ import time
 
 from pynput.keyboard import Controller, Key
 
+from core.richtext import FMT_KEYS, parse_rich_text
+
 NEIGHBORS = {
     'a': 'qwsz', 'b': 'vghn', 'c': 'xdfv', 'd': 'ersfxc', 'e': 'wsdr',
     'f': 'rtgvcd', 'g': 'tyhbvf', 'h': 'yujnbg', 'i': 'ujko', 'j': 'uikmnh',
@@ -154,6 +156,127 @@ class TypingEngine:
         self._mark(key_id)
         self.keyboard.press(key)
         self.keyboard.release(key)
+
+    def _tap_ctrl(self, letter: str) -> None:
+        """Marked Ctrl+letter (bold/italic/underline toggles)."""
+        self._mark(letter)
+        with self.keyboard.pressed(Key.ctrl):
+            self.keyboard.press(letter)
+            self.keyboard.release(letter)
+
+    def _apply_heading(self, level: int) -> None:
+        """Marked Ctrl+Alt+1/2/3 (works in Word and Google Docs)."""
+        num = str(level)
+        self._mark(num)
+        with self.keyboard.pressed(Key.ctrl, Key.alt):
+            self.keyboard.press(num)
+            self.keyboard.release(num)
+
+    def _reset_style(self, app: str) -> None:
+        """Back to Normal: Word Ctrl+Shift+N, Docs Ctrl+Alt+0."""
+        if app == 'docs':
+            self._mark('0')
+            with self.keyboard.pressed(Key.ctrl, Key.alt):
+                self.keyboard.press('0')
+                self.keyboard.release('0')
+        else:
+            self._mark('n')
+            with self.keyboard.pressed(Key.ctrl, Key.shift):
+                self.keyboard.press('n')
+                self.keyboard.release('n')
+
+    def type_rich(self, markup: str, app: str = 'word',
+                  progress_callback=None, start_index: int = 0) -> bool:
+        """Types markup with real formatting (see core.richtext for syntax).
+
+        Progress (current_index/total, words) is tracked in PLAIN characters
+        (markup stripped), so callers should session-track the plain text
+        while passing the markup here for typing.
+        """
+        tokens = parse_rich_text(markup)
+        plain = ''.join(t[1] for t in tokens if t[0] == 'text')
+        total = len(plain)
+        self.total = total
+        self._word_ends = [m.end() for m in re.finditer(r'\S+', plain)]
+        self.word_total = len(self._word_ends)
+        target = snap_to_word_start(plain, max(0, min(start_index, total))) if start_index > 0 else 0
+
+        # Pre-pass: collect fmt/heading state skipped over so a resume
+        # re-asserts the style instead of typing styled text plain.
+        pending: dict = {}
+        pending_heading = None
+        pos = 0
+        rest: list = []
+        for tok in tokens:
+            if tok[0] == 'text':
+                s = tok[1]
+                if pos + len(s) <= target:
+                    pos += len(s)
+                    continue
+                if pos < target:
+                    rest.append(('text', s[target - pos:]))
+                    pos = target
+                else:
+                    rest.append(tok)
+            elif tok[0] == 'fmt':
+                if pos < target:
+                    pending[tok[1]] = tok[2]
+                else:
+                    rest.append(tok)
+            else:  # heading
+                if pos < target:
+                    pending_heading = tok[1]
+                else:
+                    rest.append(tok)
+
+        for name, on in pending.items():
+            if on:
+                self._tap_ctrl(FMT_KEYS[name])
+        active = dict(pending)
+        if pending_heading:
+            self._apply_heading(pending_heading)
+        cur_heading = pending_heading
+
+        i = target
+        self.current_index = i
+        self.chars_typed = i
+        self._sync_word_index()
+        self._update_fatigue(force=True)
+
+        for tok in rest:
+            if self.stop_flag[0]:
+                self.current_index = i
+                return False
+            if tok[0] == 'text':
+                for ch in tok[1]:
+                    if self.stop_flag[0]:
+                        self.current_index = i
+                        return False
+                    self._type_char(ch, self._get_word_at(plain, i))
+                    i += 1
+                    self.chars_typed += 1
+                    self.current_index = i
+                    self._sync_word_index()
+                    self._update_fatigue()
+                    if progress_callback:
+                        progress_callback(min(i, total), total)
+            elif tok[0] == 'fmt':
+                _, name, on = tok
+                if active.get(name, False) != on:
+                    self._tap_ctrl(FMT_KEYS[name])
+                    active[name] = on
+            else:  # heading
+                level = tok[1]
+                if cur_heading != level:
+                    if level is None:
+                        self._reset_style(app)
+                    else:
+                        self._apply_heading(level)
+                    cur_heading = level
+
+        self.current_index = total
+        self._sync_word_index()
+        return True
 
     def _type_char(self, char: str, current_word: str = '') -> None:
         if self._should_make_typo(char):

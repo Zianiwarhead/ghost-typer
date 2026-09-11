@@ -33,7 +33,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.2.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.3.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -56,6 +56,9 @@ USAGE EXAMPLES:
   python main.py --countdown 8            # Longer countdown (default: 5)
   python main.py --no-focus-lock          # Disable window focus guard
   python main.py --no-interference        # Disable auto-pause on your own typing
+  python main.py --rich --file doc.txt    # **Bold**, *italic*, # headings (Word/Docs)
+  python main.py --csv data.csv           # Fill a table cell by cell (Tab nav)
+  python main.py --csv data.csv --row-key tab --csv-resume 3,1
 """
 
 # ------------------------------------------------------------------ #
@@ -101,8 +104,14 @@ def run_typing_session(
     use_focus_lock: bool = True,
     start_index: int = 0,
     use_interference: bool = True,
+    rich_app: str | None = None,
 ) -> None:
-    """Runs inside the background typing thread. Supports resume via start_index."""
+    """Runs inside the background typing thread. Supports resume via start_index.
+
+    rich_app ('word'/'docs') enables markup mode: session/progress indexes
+    count PLAIN characters while the engine types the markup with formatting.
+    """
+    from core.richtext import has_markup, strip_rich
 
     # --- Focus guard setup ---
     focus_guard = FocusGuard(controller.pause_flag, controller.stop_flag)
@@ -115,29 +124,40 @@ def run_typing_session(
     elif use_focus_lock and not BACKEND_AVAILABLE:
         print(f"  Focus lock unavailable ({focus_guard.unavailable_reason}).\n")
 
-    # Fresh start vs resume bookkeeping
+    plain = strip_rich(text) if rich_app else text
+    if rich_app:
+        if not plain.strip():
+            print("[!] Rich text has no printable content.")
+            return
+        if not has_markup(text):
+            print("  (note: --rich found no markup — typing as plain text)")
+
+    # Fresh start vs resume bookkeeping (plain offsets in rich mode)
     is_resume = start_index > 0
     if not is_resume:
-        controller.save_session(text, profile)
+        controller.save_session(plain, profile,
+                                rich_source=text if rich_app else None,
+                                rich_app=rich_app or 'word')
     else:
         # Keep same text/profile, just continue the index.
-        controller.last_text = text
+        controller.last_text = plain
         controller.last_profile = dict(profile)
-        controller.last_total = len(text)
-        controller.update_index(start_index, len(text))
+        controller.last_total = len(plain)
+        controller.update_index(start_index, len(plain))
 
     # --- Engine (emit_hook feeds the interference guard) ---
     engine = TypingEngine(profile, controller.stop_flag, emit_hook=controller.mark_own_emit)
     if use_interference:
         controller.start_interference_watch()
 
-    est = estimate_time(text[start_index:], profile['wpm'])
-    resume_tag = f" (resuming from {start_index}/{len(text)})" if is_resume else ""
-    print(f"  [>] Typing started — {len(text)} chars{resume_tag} — est. {est}")
+    est = estimate_time(plain[start_index:], profile['wpm'])
+    resume_tag = f" (resuming from {start_index}/{len(plain)})" if is_resume else ""
+    rich_tag = f" | rich:{rich_app}" if rich_app else ""
+    print(f"  [>] Typing started — {len(plain)} chars{resume_tag} — est. {est}")
     print(f"  Profile : {profile.get('name', 'Custom')} | "
           f"{profile['wpm']} WPM | "
           f"Errors: {'on' if profile.get('errors_enabled', True) else 'off'}"
-          f"{' | mechanical' if profile.get('mechanical') else ''}\n")
+          f"{' | mechanical' if profile.get('mechanical') else ''}{rich_tag}\n")
 
     def progress(current: int, total: int) -> None:
         controller.wait_if_paused()
@@ -145,7 +165,11 @@ def run_typing_session(
         controller.update_index(current, total, w[0], w[1])
         print_progress(current, total, words=w)
 
-    success = engine.type_text(text, progress_callback=progress, start_index=start_index)
+    if rich_app:
+        success = engine.type_rich(text, app=rich_app, progress_callback=progress,
+                                   start_index=start_index)
+    else:
+        success = engine.type_text(text, progress_callback=progress, start_index=start_index)
 
     focus_guard.stop_watching()
     print()
@@ -158,6 +182,43 @@ def run_typing_session(
         print(f"\n  [Soft-stopped at {info['index']}/{info['total']} chars "
               f"(word {info['word_index']}/{info['word_total']}, resumes at word start)]")
         print(f"  Press Ctrl+Alt+S to resume. Next: '{info['remaining_preview']}'\n")
+
+
+def run_table_session(
+    rows: list,
+    profile: dict,
+    controller: SessionController,
+    col_nav: str = 'tab',
+    row_nav: str = 'enter',
+    start_cell: tuple = (0, 0),
+    use_interference: bool = True,
+) -> None:
+    """Fills a CSV table cell by cell (see core.tables)."""
+    from core.tables import count_cells, fill_table
+
+    total = count_cells(rows)
+    print(f"  [>] Table fill started — {len(rows)} rows, {total} cells "
+          f"(Tab nav: {col_nav}, row end: {row_nav})\n")
+
+    engine = TypingEngine(profile, controller.stop_flag, emit_hook=controller.mark_own_emit)
+    if use_interference:
+        controller.start_interference_watch()
+
+    def progress(done: int, tot: int, r: int, c: int) -> None:
+        print(f"\r  [cell {done}/{tot} — row {r + 1}/{len(rows)}]", end='', flush=True)
+
+    finished, (rr, cc) = fill_table(
+        engine, rows, col_nav=col_nav, row_nav=row_nav,
+        stop_flag=controller.stop_flag,
+        pause_checker=controller.wait_if_paused,
+        progress_callback=progress, start_cell=start_cell,
+    )
+    print()
+    if finished:
+        print("\n  [Done] Table filled.\n")
+    else:
+        print(f"\n  [Soft-stopped at row {rr + 1}, col {cc + 1}]")
+        print(f"  Resume with: --csv-resume {rr + 1},{cc + 1}\n")
 
 # ------------------------------------------------------------------ #
 #  ARGS                                                                #
@@ -174,6 +235,8 @@ def parse_args():
     source = parser.add_mutually_exclusive_group()
     source.add_argument('--file', '-f', metavar='PATH')
     source.add_argument('--text', '-t', metavar='TEXT')
+    source.add_argument('--csv', metavar='PATH',
+                        help='Table-fill mode: type a CSV file cell by cell (Tab/Enter nav)')
 
     profile_group = parser.add_mutually_exclusive_group()
     profile_group.add_argument('--profile', '-p', metavar='NAME', default='normal')
@@ -195,6 +258,16 @@ def parse_args():
                         help='Esc clears resume state instead of soft-stop')
     parser.add_argument('--chat-mode', action='store_true',
                         help='Use Shift+Enter for newlines (safe for Claude, ChatGPT, Discord etc)')
+    parser.add_argument('--rich', action='store_true',
+                        help='Rich-text mode: **bold**, *italic*, __underline__, # headings (Word/Docs)')
+    parser.add_argument('--rich-app', choices=['word', 'docs'], default='word',
+                        help='Target app for rich styles: heading reset shortcut (default: word)')
+    parser.add_argument('--row-key', choices=['enter', 'tab', 'down'], default='enter',
+                        help='CSV table-fill: key ending each row (default: enter; Word tables often want tab)')
+    parser.add_argument('--csv-resume', metavar='ROW,COL',
+                        help='CSV table-fill: start at cell ROW,COL, 1-based (e.g. 3,1)')
+    parser.add_argument('--table-typos', action='store_true',
+                        help='CSV table-fill: allow typos (default off — data integrity)')
 
     return parser.parse_args()
 
@@ -249,11 +322,38 @@ def main():
             print(f"[!] {e}")
             sys.exit(1)
 
+    # Load CSV table if provided (fail fast on bad path/content)
+    csv_rows: list | None = None
+    start_cell: tuple = (0, 0)
+    if args.csv:
+        from core.tables import load_csv, parse_cell
+        try:
+            csv_rows = load_csv(args.csv)
+            if args.csv_resume:
+                start_cell = parse_cell(args.csv_resume)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"[!] {e}")
+            sys.exit(1)
+        if not args.table_typos:
+            profile['errors_enabled'] = False
+            profile['error_rate'] = 0.0
+            profile['transposition_rate'] = 0.0
+
     use_focus_lock = not args.no_focus_lock
     use_interference = not args.no_interference
+    rich_app = args.rich_app if args.rich else None
 
     # Print info
-    if static_text:
+    if csv_rows is not None:
+        from core.tables import count_cells
+        total_chars = sum(len(c) for r in csv_rows for c in r)
+        print(f"  Source     : table: {args.csv} ({len(csv_rows)} rows, {count_cells(csv_rows)} cells)")
+        print(f"  Characters : {total_chars}")
+        print(f"  Est. time  : {estimate_time('x' * total_chars, profile['wpm'])}")
+        print(f"  Row end key: {args.row_key} | Start cell: {start_cell[0] + 1},{start_cell[1] + 1}")
+        if not args.table_typos:
+            print("  Typos      : off (table mode — pass --table-typos to allow)")
+    elif static_text:
         print(f"  Source     : {'file: ' + args.file if args.file else 'direct text'}")
         print(f"  Preview    : {preview_text(static_text)}")
         print(f"  Characters : {len(static_text)}")
@@ -262,6 +362,8 @@ def main():
         print("  Source     : Clipboard")
 
     print(f"  Profile    : {profile.get('name')} ({profile['wpm']} WPM)")
+    if rich_app:
+        print(f"  Rich mode  : on ({rich_app} styles: **bold**, *italic*, # headings)")
     print(f"  Countdown  : {args.countdown}s")
     print(f"  Focus lock : {'on (auto-pause on window switch)' if use_focus_lock and BACKEND_AVAILABLE else 'off'}")
     print(f"  Stop mode  : {'hard-stop (Esc clears resume)' if args.hard_stop else 'soft-stop (Esc keeps place for resume)'}")
@@ -281,6 +383,24 @@ def main():
             print("[!] Already typing. Press Esc to stop first.")
             return
 
+        # Table-fill branch: position in the FIRST cell (or --csv-resume),
+        # then Start. No controller resume — re-entry uses --csv-resume.
+        if csv_rows is not None:
+            run_countdown(args.countdown)
+            if controller.stop_flag[0]:
+                return
+            controller.start_session(
+                run_table_session,
+                csv_rows,
+                profile,
+                controller,
+                'tab',
+                args.row_key,
+                start_cell,
+                use_interference,
+            )
+            return
+
         # Resume path: same text, continue from last_index (no countdown repeat? keep short one)
         if controller.has_resume() and static_text is not None:
             info = controller.get_resume_info()
@@ -290,11 +410,12 @@ def main():
                 return
             controller.resume_session(
                 run_typing_session,
-                controller.last_text,
+                controller.last_rich_source or controller.last_text,
                 controller.last_profile,
                 controller,
                 use_focus_lock,
                 use_interference=use_interference,
+                rich_app=controller.last_rich_app if controller.last_rich_source else None,
             )
             return
         if controller.has_resume() and static_text is None:
@@ -307,11 +428,12 @@ def main():
                 return
             controller.resume_session(
                 run_typing_session,
-                controller.last_text,
+                controller.last_rich_source or controller.last_text,
                 controller.last_profile,
                 controller,
                 use_focus_lock,
                 use_interference=use_interference,
+                rich_app=controller.last_rich_app if controller.last_rich_source else None,
             )
             return
 
@@ -340,6 +462,7 @@ def main():
             controller,
             use_focus_lock,
             use_interference=use_interference,
+            rich_app=rich_app,
         )
 
     def on_stop(info=None) -> None:

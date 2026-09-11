@@ -7,7 +7,7 @@ import os
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from core.controller import SessionController
 from core.engine import TypingEngine
@@ -34,7 +34,7 @@ def _load_icon(root: tk.Tk) -> None:
 class GhostTyperApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ghost Typer v2.2.0 — human-like typing")
+        self.title("Ghost Typer v2.3.0 — human-like typing")
         self.geometry("560x620")
         self.resizable(True, True)
         _load_icon(self)
@@ -43,6 +43,7 @@ class GhostTyperApp(tk.Tk):
         self.controller.on_interference = self._on_interference
         self._status_msg = tk.StringVar(value="Paste text, pick a speed, press Start.")
         self._progress_var = tk.DoubleVar(value=0.0)
+        self._table_active = False
 
         self._build_widgets()
         self._poll_ui()
@@ -88,6 +89,17 @@ class GhostTyperApp(tk.Tk):
         self.countdown_var = tk.IntVar(value=5)
         ttk.Spinbox(row3, from_=2, to=15, textvariable=self.countdown_var, width=4).pack(side=tk.LEFT, padx=4)
 
+        # Rich-text row
+        row4 = ttk.Frame(frm)
+        row4.pack(fill=tk.X, pady=(0, 6))
+        self.rich_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row4, text="Rich (**bold**, # headings)",
+                        variable=self.rich_var).pack(side=tk.LEFT)
+        ttk.Label(row4, text="App:").pack(side=tk.LEFT, padx=(12, 2))
+        self.rich_app_var = tk.StringVar(value="word")
+        ttk.Combobox(row4, textvariable=self.rich_app_var, values=["word", "docs"],
+                     state="readonly", width=7).pack(side=tk.LEFT)
+
         # Text box
         ttk.Label(frm, text="Text to type:").pack(anchor=tk.W)
         self.text_box = tk.Text(frm, height=12, wrap=tk.WORD)
@@ -98,6 +110,18 @@ class GhostTyperApp(tk.Tk):
         ttk.Button(btn_row, text="Paste clipboard", command=self._paste_clipboard).pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Clear", command=lambda: self.text_box.delete("1.0", tk.END)).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_row, text="Copy remaining", command=self._copy_remaining).pack(side=tk.LEFT)
+
+        # CSV table-fill row
+        csv_row = ttk.Frame(frm)
+        csv_row.pack(fill=tk.X, pady=4)
+        ttk.Label(csv_row, text="CSV:").pack(side=tk.LEFT)
+        self.csv_var = tk.StringVar(value="")
+        ttk.Entry(csv_row, textvariable=self.csv_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+        ttk.Button(csv_row, text="Browse", command=self._browse_csv).pack(side=tk.LEFT)
+        self.rowkey_var = tk.StringVar(value="enter")
+        ttk.Combobox(csv_row, textvariable=self.rowkey_var, values=["enter", "tab", "down"],
+                     state="readonly", width=7).pack(side=tk.LEFT, padx=6)
+        ttk.Button(csv_row, text="Fill table", command=self.on_fill_table_btn).pack(side=tk.LEFT)
 
         # Action buttons
         act = ttk.Frame(frm)
@@ -201,11 +225,12 @@ class GhostTyperApp(tk.Tk):
             messagebox.showwarning("No text", "Paste text first (or copy to clipboard).")
             return
         profile = self._current_profile()
+        rich_app = self.rich_app_var.get() if self.rich_var.get() else None
         self._set_status(f"Starting in {self.countdown_var.get()}s — click your target box NOW!")
         threading.Thread(target=self._countdown_then_start,
-                         args=(text, profile), daemon=True).start()
+                         args=(text, profile, rich_app), daemon=True).start()
 
-    def _countdown_then_start(self, text: str, profile: dict):
+    def _countdown_then_start(self, text: str, profile: dict, rich_app=None):
         secs = max(2, int(self.countdown_var.get() or 5))
         for i in range(secs, 0, -1):
             if self.controller.stop_flag[0]:
@@ -216,7 +241,8 @@ class GhostTyperApp(tk.Tk):
             return
         use_focus = bool(self.focus_var.get())
         self.controller.start_session(self._run_session, text, profile,
-                                      self.controller, use_focus)
+                                      self.controller, use_focus,
+                                      rich_app=rich_app)
 
     def _countdown_then_resume(self):
         for i in range(3, 0, -1):
@@ -227,21 +253,94 @@ class GhostTyperApp(tk.Tk):
         if self.controller.stop_flag[0]:
             return
         use_focus = bool(self.focus_var.get())
+        rich_kw = {}
+        if self.controller.last_rich_source:
+            rich_kw = {"rich_app": self.controller.last_rich_app}
         self.controller.resume_session(
             self._run_session,
-            self.controller.last_text, self.controller.last_profile,
+            self.controller.last_rich_source or self.controller.last_text,
+            self.controller.last_profile,
             self.controller, use_focus,
+            **rich_kw,
         )
 
-    def _run_session(self, text, profile, controller, use_focus_lock=True, start_index=0):
+    def _browse_csv(self):
+        path = filedialog.askopenfilename(title="Choose CSV table",
+                                          filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        if path:
+            self.csv_var.set(path)
+
+    def on_fill_table_btn(self):
+        if self.controller.is_typing():
+            self._set_status("Already typing — Stop first.")
+            return
+        path = self.csv_var.get().strip()
+        if not path:
+            messagebox.showwarning("No CSV", "Pick a CSV file first (Browse).")
+            return
+        try:
+            from core.tables import load_csv
+            rows = load_csv(path)
+        except (FileNotFoundError, ValueError) as e:
+            messagebox.showerror("CSV", str(e))
+            return
+        profile = self._current_profile()
+        profile['errors_enabled'] = False
+        profile['error_rate'] = 0.0
+        profile['transposition_rate'] = 0.0
+        self._set_status(f"Table fill starts in {self.countdown_var.get()}s — click the FIRST cell NOW!")
+        threading.Thread(target=self._countdown_then_fill,
+                         args=(rows, profile), daemon=True).start()
+
+    def _countdown_then_fill(self, rows: list, profile: dict):
+        secs = max(2, int(self.countdown_var.get() or 5))
+        for i in range(secs, 0, -1):
+            if self.controller.stop_flag[0]:
+                return
+            self._status_msg.set(f"Table fill starts in {i}s — click the FIRST cell NOW!")
+            time.sleep(1)
+        if self.controller.stop_flag[0]:
+            return
+        self.controller.start_session(self._run_table, rows, profile, self.controller)
+
+    def _run_table(self, rows: list, profile: dict, controller):
+        from core.tables import fill_table
+        self._table_active = True
+        engine = TypingEngine(profile, controller.stop_flag, emit_hook=controller.mark_own_emit)
+        controller.start_interference_watch()
+
+        def progress(done: int, tot: int, r: int, c: int):
+            controller.wait_if_paused()
+            controller.update_index(done, tot)
+            self._status_msg.set(f"Table: cell {done}/{tot} (row {r + 1}/{len(rows)})")
+
+        finished, (rr, cc) = fill_table(
+            engine, rows, col_nav='tab', row_nav=self.rowkey_var.get(),
+            stop_flag=controller.stop_flag,
+            pause_checker=controller.wait_if_paused,
+            progress_callback=progress,
+        )
+        if finished:
+            controller.clear_session()
+            self._status_msg.set("Done! Table filled.")
+        else:
+            self._status_msg.set(f"Soft-stopped at row {rr + 1}, col {cc + 1} of the CSV.")
+        self._table_active = False
+
+    def _run_session(self, text, profile, controller, use_focus_lock=True, start_index=0,
+                     rich_app=None):
+        from core.richtext import strip_rich
+        plain = strip_rich(text) if rich_app else text
         is_resume = start_index > 0
         if not is_resume:
-            controller.save_session(text, profile)
+            controller.save_session(plain, profile,
+                                    rich_source=text if rich_app else None,
+                                    rich_app=rich_app or 'word')
         else:
-            controller.last_text = text
+            controller.last_text = plain
             controller.last_profile = dict(profile)
-            controller.last_total = len(text)
-            controller.update_index(start_index, len(text))
+            controller.last_total = len(plain)
+            controller.update_index(start_index, len(plain))
         focus_guard = FocusGuard(controller.pause_flag, controller.stop_flag)
         if use_focus_lock and BACKEND_AVAILABLE:
             try:
@@ -257,7 +356,11 @@ class GhostTyperApp(tk.Tk):
             w = engine.get_word_progress()
             controller.update_index(cur, tot, w[0], w[1])
 
-        ok = engine.type_text(text, progress_callback=progress, start_index=start_index)
+        if rich_app:
+            ok = engine.type_rich(text, app=rich_app, progress_callback=progress,
+                                  start_index=start_index)
+        else:
+            ok = engine.type_text(text, progress_callback=progress, start_index=start_index)
         try:
             focus_guard.stop_watching()
         except Exception:
@@ -291,7 +394,7 @@ class GhostTyperApp(tk.Tk):
             if total > 0:
                 pct = (idx / total) * 100
                 self._progress_var.set(pct)
-                if self.controller.is_typing():
+                if self.controller.is_typing() and not self._table_active:
                     wi, wt = self.controller.last_word_index, self.controller.last_word_total
                     self._set_status(f"Typing… {idx}/{total} chars, word {wi}/{wt} ({pct:.0f}%) — {preview_text(self.controller.last_text[idx:idx+60])}")
             else:

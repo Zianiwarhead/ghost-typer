@@ -34,6 +34,10 @@ class SessionController:
         self.last_total: int = 0
         self.last_word_index: int = 0
         self.last_word_total: int = 0
+        # Rich-mode resume: last_text holds PLAIN text (offsets/progress),
+        # last_rich_source holds the MARKUP re-parsed on resume.
+        self.last_rich_source: str | None = None
+        self.last_rich_app: str = 'word'
 
         # Own-keypress ledger — engine calls mark_own_emit(key_id) before
         # each synthetic press so the interference guard doesn't flag our
@@ -61,12 +65,15 @@ class SessionController:
         any key within the window (backward compatible)."""
         self._own_emits.append((time.time(), self._canon(key_id)))
 
-    def save_session(self, text: str, profile: dict) -> None:
+    def save_session(self, text: str, profile: dict,
+                       rich_source: str | None = None, rich_app: str = 'word') -> None:
         """Call when a fresh typing run begins."""
         self.last_text = text
         self.last_profile = dict(profile)
         self.last_index = 0
         self.last_total = len(text)
+        self.last_rich_source = rich_source
+        self.last_rich_app = rich_app or 'word'
 
     def update_index(self, current: int, total: int,
                        word_current: int | None = None, word_total: int | None = None) -> None:
@@ -109,6 +116,8 @@ class SessionController:
         self.last_total = 0
         self.last_word_index = 0
         self.last_word_total = 0
+        self.last_rich_source = None
+        self.last_rich_app = 'word'
 
     def start_session(self, fn: Callable, *args, **kwargs) -> None:
         """Runs fn in a background daemon thread (fresh start)."""

@@ -16,7 +16,9 @@ class DummyKeyboard:
     def release(self, key):
         self.pressed_keys.append(("release", str(key)))
 
-    def pressed(self, key):
+    def pressed(self, *keys):
+        self.pressed_keys.append(("hold", tuple(str(k) for k in keys)))
+
         class _Ctx:
             def __enter__(self_inner):
                 return None

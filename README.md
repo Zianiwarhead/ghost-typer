@@ -22,6 +22,8 @@ MIT open source — use it, share it, be happy.
 - **Auto-pause:** window focus-loss + physical typing interference detection
 - **Inputs:** clipboard, `.txt`/`.md` file, direct `--text`, GUI textbox
 - **Chat-safe newlines:** `--chat-mode` uses Shift+Enter (Claude/ChatGPT/Discord)
+- **Rich text (`--rich`):** `**bold**`, `*italic*`, `__underline__`, `# headings` typed with real Word/Docs formatting
+- **Table fill (`--csv`):** fills forms and tables cell by cell with Tab/Enter navigation
 
 ## Platform support
 
@@ -120,6 +122,31 @@ Fine-tune with `--wpm N` (10–300) and `--no-errors`.
 - True "scan the target app to find the caret" is intentionally **not** attempted
   (fragile OCR/UI-automation) — index-based resume is exact and predictable.
 
+## Rich text + tables
+
+Rich mode types real formatting into Word or Google Docs (`--rich-app word|docs`):
+
+| Markup | Result |
+|---|---|
+| `**bold**` | Ctrl+B bold |
+| `*italic*` / `_italic_` | Ctrl+I italic |
+| `__underline__` | Ctrl+U underline |
+| `# H` / `## H` / `### H` | Heading 1/2/3, auto-reset to Normal after the line |
+
+```powershell
+python main.py --rich --file doc.txt            # Word styles by default
+python main.py --rich --rich-app docs --file doc.txt
+```
+
+Table mode fills forms and tables from CSV — click the **first cell**, it Tabs
+between cells and presses Enter (or `--row-key tab|down`) at each row end.
+Typos default off so your data stays exact (`--table-typos` to allow them):
+
+```powershell
+python main.py --csv data.csv
+python main.py --csv data.csv --row-key tab --csv-resume 3,1
+```
+
 ## Project layout
 
 ```
@@ -134,6 +161,8 @@ core/focus_guard_linux.py    Linux focus-lock (xdotool)
 core/focus_guard_base.py     shared interface + graceful no-op fallback
 core/profiles.py           presets
 core/inputs.py             clipboard/file/string sources
+core/richtext.py           **bold**/*italic*/# heading markup parser
+core/tables.py             CSV table-fill driver (Tab/Enter nav)
 assets/                    generated icon.ico/.png
 tests/                     pytest suite (mocked keyboard — no real keypresses)
 ```
