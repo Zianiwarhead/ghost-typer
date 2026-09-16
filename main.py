@@ -35,7 +35,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.7.1  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.8.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -59,6 +59,9 @@ USAGE EXAMPLES:
   python main.py --no-focus-lock          # Disable window focus guard
   python main.py --no-interference        # Disable auto-pause on your own typing
   python main.py --rich --file doc.txt    # **Bold**, *italic*, # headings (Word/Docs)
+  python main.py --keep-format               # Ctrl+V clipboard as-is (keeps tables/colors)
+  python main.py --ask "what error is shown?" --type-answer
+  python main.py --click "Save"              # human-like click by control name
   python main.py --csv data.csv           # Fill a table cell by cell (Tab nav)
   python main.py --csv data.csv --row-key tab --csv-resume 3,1
   python main.py --bg "Notepad" --file note.txt   # Background paste, no focus needed
@@ -114,11 +117,14 @@ def run_typing_session(
     start_index: int = 0,
     use_interference: bool = True,
     rich_app: str | None = None,
+    paste_through: bool = False,
 ) -> None:
     """Runs inside the background typing thread. Supports resume via start_index.
 
     rich_app ('word'/'docs') enables markup mode: session/progress indexes
     count PLAIN characters while the engine types the markup with formatting.
+    paste_through skips typing and presses Ctrl+V once, so clipboard
+    formatting (bold, tables, colors) lands intact.
     """
     from core.richtext import has_markup, strip_rich
 
@@ -132,6 +138,17 @@ def run_typing_session(
         print("  Switch away -> auto-pause. Return -> auto-resume.\n")
     elif use_focus_lock and not BACKEND_AVAILABLE:
         print(f"  Focus lock unavailable ({focus_guard.unavailable_reason}).\n")
+
+    if paste_through:
+        engine = TypingEngine(profile, controller.stop_flag,
+                              emit_hook=controller.mark_own_emit)
+        print("  [>] Pasting clipboard as-is — formatting preserved.\n")
+        engine._tap_ctrl('v')  # marked Ctrl+V (guard ignores ctrl-held presses)
+        time.sleep(0.5)
+        focus_guard.stop_watching()
+        controller.clear_session()
+        print("\n  [Done] Pasted.\n")
+        return
 
     plain = strip_rich(text) if rich_app else text
     if rich_app:
@@ -474,6 +491,26 @@ def parse_args():
                         help='Rich-text mode: **bold**, *italic*, __underline__, # headings (Word/Docs)')
     parser.add_argument('--rich-app', choices=['word', 'docs'], default='word',
                         help='Target app for rich styles: heading reset shortcut (default: word)')
+    parser.add_argument('--keep-format', action='store_true',
+                        help='Paste clipboard as-is (Ctrl+V) so formatting survives; no retyping')
+    parser.add_argument('--ask', metavar='QUESTION',
+                        help='Brain mode: read the screen and answer QUESTION (needs --brain-key or local model)')
+    parser.add_argument('--type-answer', action='store_true',
+                        help='Brain mode: type the answer into the focused window after asking')
+    parser.add_argument('--shot', action='store_true',
+                        help='Brain mode: attach a screenshot alongside the UI tree (vision-capable backends)')
+    parser.add_argument('--click', metavar='LABEL',
+                        help='Click the on-screen control whose name contains LABEL (e.g. "Save")')
+    parser.add_argument('--brain', choices=['api', 'local'], default='api',
+                        help='Brain backend: api (OpenAI-compatible endpoint) or local tiny model (default: api)')
+    parser.add_argument('--brain-model', metavar='MODEL', default=None,
+                        help='Brain model name (API backend; default: gpt-4o-mini)')
+    parser.add_argument('--brain-url', metavar='URL', default='https://api.openai.com/v1',
+                        help='Brain API base URL (works with OpenRouter, llama.cpp server, ...)')
+    parser.add_argument('--brain-key', metavar='KEY', default=None,
+                        help='Brain API key (else GHOST_BRAIN_KEY / OPENAI_API_KEY env)')
+    parser.add_argument('--brain-download', action='store_true',
+                        help='Download the tiny local model (~200MB) and exit')
     parser.add_argument('--row-key', choices=['enter', 'tab', 'down'], default='enter',
                         help='CSV table-fill: key ending each row (default: enter; Word tables often want tab)')
     parser.add_argument('--csv-resume', metavar='ROW,COL',
@@ -634,6 +671,67 @@ def main():
         build_custom_profile_interactive()
         return
 
+    if getattr(args, 'brain_download', False):
+        from core.brain import download_model
+        try:
+            dest = download_model()
+        except Exception as e:
+            print(f"[!] Model download failed: {e}")
+            sys.exit(1)
+        print(f"\n  Local brain ready at {dest}\n")
+        return
+
+    if getattr(args, 'shot', False) and not args.ask:
+        from core.brain import capture_screen
+        data, note = capture_screen()
+        if data is None:
+            print(f"[!] {note}")
+            sys.exit(1)
+        out = "ghost-shot.jpg"
+        with open(out, 'wb') as f:
+            f.write(data)
+        print(f"\n  Screenshot saved: {out} ({len(data)} bytes)\n")
+        return
+
+    if getattr(args, 'click', None):
+        from core import mouse as _mouse
+        from core import uia as _uia
+        if not _uia.available():
+            print("[!] Clicking by name needs Windows + pip install uiautomation.")
+            sys.exit(1)
+        node = _uia.find_on_screen(args.click)
+        if node is None or not node.get('rect'):
+            print(f"[!] No visible control matching {args.click!r} (see --shot to check).")
+            sys.exit(1)
+        x, y = _mouse.click_element(node)
+        print(f"\n  Clicked '{node.get('name')}' at ({x}, {y}).\n")
+        return
+
+    brain_answer = None
+    if getattr(args, 'ask', None):
+        from core.brain import ask as brain_ask
+        from core.brain import build_context
+        tree_text, shot, notes = build_context(screenshot=bool(args.shot))
+        for note in notes:
+            print(f"  (note: {note})")
+        if not tree_text.strip() and shot is None:
+            print("[!] Nothing readable on screen right now.")
+            sys.exit(1)
+        print(f"  Asking the {args.brain} brain ({len(tree_text)} chars of UI tree"
+              + (" + screenshot" if shot else "") + ") ...")
+        try:
+            brain_answer = brain_ask(
+                args.ask, tree_text, shot, backend=args.brain,
+                model=args.brain_model, api_url=args.brain_url,
+                api_key=args.brain_key)
+        except (RuntimeError, ValueError) as e:
+            print(f"\n[!] Brain failed: {e}\n")
+            sys.exit(1)
+        print(f"\n  Answer:\n  {brain_answer}\n")
+        if not args.type_answer:
+            return
+        args.text = None  # the answer becomes the source below
+
     if args.gui:
         if args.bg:
             print("(note: --bg is CLI-only for now — the GUI types into the focused window as usual)")
@@ -662,7 +760,9 @@ def main():
 
     # Load static text if provided
     static_text: str | None = None
-    if args.text:
+    if brain_answer is not None:
+        static_text = brain_answer
+    elif args.text:
         static_text = get_from_string(args.text)
     elif args.file:
         try:
@@ -1006,6 +1106,7 @@ def main():
             use_focus_lock,
             use_interference=use_interference,
             rich_app=rich_app,
+            paste_through=bool(args.keep_format),
         )
 
     def on_stop(info=None) -> None:

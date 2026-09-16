@@ -22,7 +22,8 @@ MIT open source — use it, share it, be happy.
 - **Auto-pause:** window focus-loss + physical typing interference detection
 - **Inputs:** clipboard, `.txt`/`.md` file, direct `--text`, GUI textbox
 - **Chat-safe newlines:** `--chat-mode` uses Shift+Enter (Claude/ChatGPT/Discord)
-- **Rich text (`--rich`):** `**bold**`, `*italic*`, `__underline__`, `# headings` typed with real Word/Docs formatting
+- **Rich text (`--rich`):** `**bold**`, `*italic*`, `__underline__`, `# headings`,
+  `- bullets` / `1. numbered` typed with real Word/Docs formatting
 - **Table fill (`--csv`):** fills forms and tables cell by cell with Tab/Enter navigation
 - **Background mode (`--bg`, Windows):** paste/type into an unfocused classic app while you work elsewhere
 
@@ -143,10 +144,12 @@ Rich mode types real formatting into Word or Google Docs (`--rich-app word|docs`
 | `*italic*` / `_italic_` | Ctrl+I italic |
 | `__underline__` | Ctrl+U underline |
 | `# H` / `## H` / `### H` | Heading 1/2/3, auto-reset to Normal after the line |
+| `- item` / `1. item` | bulleted / numbered list (app autocorrect, `<ul>`/`<ol>` on paste) |
 
 ```powershell
 python main.py --rich --file doc.txt            # Word styles by default
 python main.py --rich --rich-app docs --file doc.txt
+python main.py --keep-format                    # Ctrl+V clipboard as-is (tables/colors survive)
 ```
 
 Table mode fills forms and tables from CSV — click the **first cell**, it Tabs
@@ -226,6 +229,30 @@ Security, stated plainly (no encryption theater here):
 - Traffic is plain HTTP: fine on a trusted home LAN with the token, but
   assume anyone capturing packets can read it. No public internet, ever.
 
+## Brain mode (screen Q&A + clicking, Windows)
+
+GhostTyper can read the screen (UI Automation tree + optional screenshot),
+ask a model about it, type the answer, and click named controls:
+
+```powershell
+python main.py --ask "what error is shown?"
+python main.py --ask "which save option?" --type-answer   # answer typed out
+python main.py --ask "summarize this form" --shot         # + screenshot (vision)
+python main.py --click "Save"                             # human-like mouse click
+python main.py --shot                                     # save ghost-shot.jpg for a look
+```
+
+Two backends, one flag (`--brain api|local`):
+- **api** (default, genuinely capable): any OpenAI-compatible endpoint —
+  `--brain-url` (OpenAI, OpenRouter, local llama.cpp server), `--brain-key`
+  or `GHOST_BRAIN_KEY` env, `--brain-model` (default `gpt-4o-mini`).
+- **local** (experimental, offline): tiny SmolLM2 model on CPU —
+  `pip install onnxruntime tokenizers`, then `python main.py --brain-download`
+  (~200MB). Weaker and slow; fine for simple questions.
+
+Eyes are Windows + `pip install uiautomation`; everything else degrades to a
+clear message. Screenshots only ever go to the endpoint you configure.
+
 ## Project layout
 
 ```
@@ -247,6 +274,10 @@ core/watcher.py            drop-folder automation (scan/load/done-failed routing
 core/doctor.py             environment self-check (--doctor)
 core/table_themes.py         themed HTML tables (matrix/dracula/steel) for paste
 core/netserver.py            stdlib-only remote API + phone dashboard (token auth)
+core/clipfmt.py              formatted clipboard round-trip (paste tables/colors as-is)
+core/uia.py                  screen reading via UI Automation (Windows)
+core/mouse.py                human-like cursor movement + element clicking
+core/brain.py                pluggable model backend (API + tiny local) for screen Q&A
 assets/                    generated icon.ico/.png
 tests/                     pytest suite (mocked keyboard — no real keypresses)
 ```

@@ -205,6 +205,7 @@ class TypingEngine:
         # re-asserts the style instead of typing styled text plain.
         pending: dict = {}
         pending_heading = None
+        pending_list = None
         pos = 0
         rest: list = []
         for tok in tokens:
@@ -223,9 +224,14 @@ class TypingEngine:
                     pending[tok[1]] = tok[2]
                 else:
                     rest.append(tok)
-            else:  # heading
+            elif tok[0] == 'heading':
                 if pos < target:
                     pending_heading = tok[1]
+                else:
+                    rest.append(tok)
+            else:  # list open/close carries no plain chars; track state
+                if pos < target:
+                    pending_list = tok[1]
                 else:
                     rest.append(tok)
 
@@ -236,6 +242,9 @@ class TypingEngine:
         if pending_heading:
             self._apply_heading(pending_heading)
         cur_heading = pending_heading
+        # A skipped list-open means its marker was already typed earlier;
+        # just continue in that list so the close still exits it cleanly.
+        cur_list = pending_list
 
         i = target
         self.current_index = i
@@ -265,7 +274,7 @@ class TypingEngine:
                 if active.get(name, False) != on:
                     self._tap_ctrl(FMT_KEYS[name])
                     active[name] = on
-            else:  # heading
+            elif tok[0] == 'heading':
                 level = tok[1]
                 if cur_heading != level:
                     if level is None:
@@ -273,6 +282,16 @@ class TypingEngine:
                     else:
                         self._apply_heading(level)
                     cur_heading = level
+            else:  # list open/close — type the marker, let app autocorrect
+                kind = tok[1]  # 'ul' | 'ol' | None
+                if kind is None:
+                    if cur_list is not None:
+                        self._tap(Key.enter, 'key:enter')  # exit list mode
+                        cur_list = None
+                elif cur_list != kind:
+                    for mch in ('- ' if kind == 'ul' else '1. '):
+                        self._press_char(mch)
+                    cur_list = kind
 
         self.current_index = total
         self._sync_word_index()

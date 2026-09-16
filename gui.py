@@ -34,7 +34,7 @@ def _load_icon(root: tk.Tk) -> None:
 class GhostTyperApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ghost Typer v2.7.1 — human-like typing")
+        self.title("Ghost Typer v2.8.0 — human-like typing")
         self.geometry("560x620")
         self.resizable(True, True)
         _load_icon(self)
@@ -99,6 +99,9 @@ class GhostTyperApp(tk.Tk):
         self.rich_app_var = tk.StringVar(value="word")
         ttk.Combobox(row4, textvariable=self.rich_app_var, values=["word", "docs"],
                      state="readonly", width=7).pack(side=tk.LEFT)
+        self.keepfmt_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row4, text="Paste as-is",
+                        variable=self.keepfmt_var).pack(side=tk.LEFT, padx=(12, 0))
 
         # Text box
         ttk.Label(frm, text="Text to type:").pack(anchor=tk.W)
@@ -226,11 +229,13 @@ class GhostTyperApp(tk.Tk):
             return
         profile = self._current_profile()
         rich_app = self.rich_app_var.get() if self.rich_var.get() else None
+        keep_fmt = bool(self.keepfmt_var.get())
         self._set_status(f"Starting in {self.countdown_var.get()}s — click your target box NOW!")
         threading.Thread(target=self._countdown_then_start,
-                         args=(text, profile, rich_app), daemon=True).start()
+                         args=(text, profile, rich_app, keep_fmt), daemon=True).start()
 
-    def _countdown_then_start(self, text: str, profile: dict, rich_app=None):
+    def _countdown_then_start(self, text: str, profile: dict, rich_app=None,
+                              keep_fmt: bool = False):
         secs = max(2, int(self.countdown_var.get() or 5))
         for i in range(secs, 0, -1):
             if self.controller.stop_flag[0]:
@@ -242,7 +247,7 @@ class GhostTyperApp(tk.Tk):
         use_focus = bool(self.focus_var.get())
         self.controller.start_session(self._run_session, text, profile,
                                       self.controller, use_focus,
-                                      rich_app=rich_app)
+                                      rich_app=rich_app, paste_through=keep_fmt)
 
     def _countdown_then_resume(self):
         for i in range(3, 0, -1):
@@ -339,7 +344,7 @@ class GhostTyperApp(tk.Tk):
         self._table_active = False
 
     def _run_session(self, text, profile, controller, use_focus_lock=True, start_index=0,
-                     rich_app=None):
+                     rich_app=None, paste_through: bool = False):
         from core.richtext import strip_rich
         plain = strip_rich(text) if rich_app else text
         is_resume = start_index > 0
@@ -361,6 +366,18 @@ class GhostTyperApp(tk.Tk):
                 pass
         engine = TypingEngine(profile, controller.stop_flag, emit_hook=controller.mark_own_emit)
         controller.start_interference_watch()
+
+        if paste_through:
+            self._status_msg.set("Pasting clipboard as-is — formatting preserved.")
+            engine._tap_ctrl('v')
+            time.sleep(0.5)
+            try:
+                focus_guard.stop_watching()
+            except Exception:
+                pass
+            controller.clear_session()
+            self._status_msg.set("Done! Pasted.")
+            return
 
         def progress(cur, tot):
             controller.wait_if_paused()

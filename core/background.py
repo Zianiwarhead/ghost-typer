@@ -411,12 +411,14 @@ def verify_window_alive(hwnd) -> bool:
 # ------------------------------------------------------------------ #
 
 def markup_to_html(markup: str) -> str:
-    """Converts **bold**/*italic*/__underline__/# headings to HTML."""
+    """Converts **bold**/*italic*/__underline__/# headings/- lists to HTML."""
     from core.richtext import parse_rich_text
     blocks: list = []
     cur: list = []
     cur_heading = None
     open_tags: list = []
+    list_kind = None
+    items: list = []
 
     def close_inline():
         for t in reversed(open_tags):
@@ -436,13 +438,30 @@ def markup_to_html(markup: str) -> str:
                     blocks.append(f'<p>{text}</p>')
         cur_heading = None
 
+    def end_item():
+        close_inline()
+        text = ''.join(cur)
+        cur.clear()
+        if text:
+            items.append(f'<li>{text}</li>')
+
+    def end_list():
+        nonlocal list_kind
+        if list_kind is not None and items:
+            blocks.append(f'<{list_kind}>' + ''.join(items) + f'</{list_kind}>')
+        items.clear()
+        list_kind = None
+
     for tok in parse_rich_text(markup):
         kind = tok[0]
         if kind == 'text':
             parts = tok[1].split('\n')
             for j, part in enumerate(parts):
                 if j:
-                    flush_block()  # newline ends the block
+                    if list_kind is not None:
+                        end_item()
+                    else:
+                        flush_block()  # newline ends the block
                 if part:
                     cur.append(_html.escape(part, quote=False))
         elif kind == 'fmt':
@@ -455,10 +474,25 @@ def markup_to_html(markup: str) -> str:
                 open_tags.remove(tag)
                 cur.append(f'</{tag}>')
             # else: stray close (e.g. after a newline flush) — ignore
-        else:  # heading apply / reset
-            flush_block()
+        elif kind == 'heading':
+            if list_kind is not None:
+                end_item()
+                end_list()
+            else:
+                flush_block()
             cur_heading = tok[1]
-    flush_block()
+        else:  # list open/close
+            if tok[1] is None:
+                end_item()
+                end_list()
+            else:
+                flush_block()
+                list_kind = tok[1]
+    if list_kind is not None:
+        end_item()
+        end_list()
+    else:
+        flush_block()
     return ''.join(blocks)
 
 

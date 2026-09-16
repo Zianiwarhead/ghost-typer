@@ -44,6 +44,8 @@ def run() -> int:
     if system == "Windows":
         line(_try_import("win32gui"), "pywin32 (focus lock, background mode)",
              "run: pip install pywin32")
+        line(_try_import("uiautomation"), "uiautomation (screen reading, clicking)",
+             "run: pip install uiautomation (optional)")
     elif system == "Darwin":
         line(_try_import("AppKit"), "pyobjc (macOS focus lock)",
              "run: pip install pyobjc-framework-Cocoa (optional)")
