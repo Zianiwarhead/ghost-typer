@@ -159,3 +159,17 @@ def test_send_char_and_key(fake_win32):
 def test_send_char_astral_becomes_question(fake_win32):
     bg.send_char(101, "😀")
     assert fake_win32.posted == [(101, 0x0102, ord("?"), 0)]
+
+
+def test_is_web_target():
+    assert bg.is_web_target('Google Chrome') is True
+    assert bg.is_web_target('Discord') is True
+    assert bg.is_web_target('doc - Word', 'Word') is False
+    assert bg.is_web_target('', None) is False
+    assert bg.is_web_target('Untitled - Notepad') is False
+
+
+def test_web_guidance_mentions_focused():
+    msg = bg.web_target_guidance('Discord')
+    assert 'Discord' in msg and '--bg' in msg
+

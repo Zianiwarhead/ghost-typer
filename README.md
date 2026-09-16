@@ -173,7 +173,8 @@ keystrokes (plain text, resumable, never touches the clipboard).
 
 Honest limits (platform-enforced):
 - Classic apps only: Notepad, WordPad, Word. **Browsers, Discord, VS Code,
-  and Electron apps do not honor background paste — use normal mode there.**
+  and Electron apps do not honor background paste — `--bg` refuses them
+  outright and points you at focused typing instead.**
 - Click to position the caret first; minimized windows may swallow the paste.
 - Ambiguous window titles are refused (you'll get the candidate list) —
   use a fuller title or `--bg-pid`.
@@ -234,7 +235,8 @@ python tools\make_icon.py
 On headless Linux (including CI), `pynput` needs a live X display just to
 import — run tests under a virtual one: `sudo apt install xvfb && xvfb-run -a pytest -q`.
 
-Build exe: `pip install pyinstaller; pyinstaller --noconfirm --onefile --windowed --name GhostTyper --icon assets\icon.ico main.py`
+Build exe: `python tools\build_exe.py` (needs `pip install pyinstaller`;
+user-level rights on purpose — see the note inside about elevation parity)
 
 ## Roadmap
 

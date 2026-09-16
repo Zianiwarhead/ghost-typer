@@ -34,7 +34,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.5.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.6.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -297,6 +297,11 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
         print(f"\n[!] {e}\n")
         return
     print(f"  Locked (background) to: '{title}' — it stays unfocused, keep working.\n")
+
+    if bg.is_web_target(title, keyword or ""):
+        print(f"\n[!] {bg.web_target_guidance(title)}\n")
+        controller.clear_session()
+        return
 
     human = plan.get('human', False)
     profile = plan['profile']
@@ -605,6 +610,8 @@ def main():
             return 400, "need 'text' and 'target'"
         if mode not in ('human', 'rich', 'table'):
             return 400, "mode must be human, rich, or table"
+        if not target.isdigit() and bg.is_web_target(target):
+            return 400, bg.web_target_guidance(target)
         try:
             nprofile = get_profile(str(payload.get('profile', 'normal')))
         except (ValueError, AttributeError):
@@ -744,6 +751,9 @@ def main():
 
         try:
             _top, _edit, _title = bg.resolve_target(keyword=bg_keyword, pid=bg_pid)  # fail fast
+            if bg.is_web_target(_title, bg_keyword or ""):
+                print(f"\n[!] {bg.web_target_guidance(_title)}\n")
+                return
             print(f"  Target found: '{_title}' — position the caret, then it stays unfocused.")
         except (RuntimeError, ValueError) as e:
             print(f"\n[!] {e}\n")

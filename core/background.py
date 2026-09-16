@@ -103,6 +103,31 @@ def _with_clipboard(fn, retries: int = 8):
 
 EDIT_CLASSES = ('Edit', 'RichEdit20W', 'RICHEDIT50W', 'RICHEDIT60W', '_WwG')
 
+# Apps whose windows don't honor background messages: Chromium browsers
+# and Electron/chat apps paint their own controls and drop WM_CHAR/WM_PASTE
+# posted from outside. These need focused typing, not --bg.
+WEB_APP_KEYWORDS = ('chrome', 'chromium', 'edge', 'firefox', 'brave', 'opera',
+                    'arc', 'discord', 'slack', 'teams', 'whatsapp', 'telegram',
+                    'signal', 'vscode', 'visual studio code', 'electron', 'spotify')
+
+
+def is_web_target(*texts) -> bool:
+    """True if any text names a browser/chat/Electron app."""
+    for text in texts:
+        if not text:
+            continue
+        lowered = str(text).lower()
+        if any(kw in lowered for kw in WEB_APP_KEYWORDS):
+            return True
+    return False
+
+
+def web_target_guidance(title: str) -> str:
+    return (f"'{title}' looks like a browser/chat app — background delivery "
+            "can't reach it (Chromium/Electron drop window messages). Drop --bg "
+            "and use focused typing instead: run without --bg and click the "
+            "field during the countdown.")
+
 
 def find_windows(keyword: str) -> list:
     """All visible top-level windows whose title contains keyword."""

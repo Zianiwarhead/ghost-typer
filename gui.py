@@ -34,7 +34,7 @@ def _load_icon(root: tk.Tk) -> None:
 class GhostTyperApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ghost Typer v2.5.0 — human-like typing")
+        self.title("Ghost Typer v2.6.0 — human-like typing")
         self.geometry("560x620")
         self.resizable(True, True)
         _load_icon(self)
