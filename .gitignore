@@ -33,3 +33,4 @@ Thumbs.db
 *.log
 .ghost-typer/
 custom_profile.json
+@AutomationLog.txt
