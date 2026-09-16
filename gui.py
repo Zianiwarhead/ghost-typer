@@ -34,7 +34,7 @@ def _load_icon(root: tk.Tk) -> None:
 class GhostTyperApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Ghost Typer v2.7.0 — human-like typing")
+        self.title("Ghost Typer v2.7.1 — human-like typing")
         self.geometry("560x620")
         self.resizable(True, True)
         _load_icon(self)
@@ -306,6 +306,13 @@ class GhostTyperApp(tk.Tk):
     def _run_table(self, rows: list, profile: dict, controller):
         from core.tables import fill_table
         self._table_active = True
+        focus_guard = FocusGuard(controller.pause_flag, controller.stop_flag)
+        if bool(self.focus_var.get()) and BACKEND_AVAILABLE:
+            try:
+                focus_guard.lock_to_current_window()
+                focus_guard.start_watching()
+            except Exception:
+                pass
         engine = TypingEngine(profile, controller.stop_flag, emit_hook=controller.mark_own_emit)
         controller.start_interference_watch()
 
@@ -320,6 +327,10 @@ class GhostTyperApp(tk.Tk):
             pause_checker=controller.wait_if_paused,
             progress_callback=progress,
         )
+        try:
+            focus_guard.stop_watching()
+        except Exception:
+            pass
         if finished:
             controller.clear_session()
             self._status_msg.set("Done! Table filled.")

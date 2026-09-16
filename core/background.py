@@ -196,11 +196,26 @@ def find_edit_child(hwnd):
     return hits[-1] if hits else hwnd
 
 
+CONSOLE_CLASSES = ('ConsoleWindowClass', 'WindowsTerminal', 'CASCADIA_HOSTING_WINDOW_CLASS')
+
+
+def _is_console(hwnd) -> bool:
+    """True for terminal windows (their titles echo the command line, so a
+    --bg keyword almost always matches your own shell by accident)."""
+    win32gui, _ = _require_win32()
+    try:
+        return win32gui.GetClassName(hwnd) in CONSOLE_CLASSES
+    except Exception:
+        return False
+
+
 def resolve_target(keyword: str | None = None, pid: int | None = None):
     """(top_hwnd, edit_hwnd, title) for delivery.
 
-    Keyword matching prefers an exact title; ambiguous partial matches raise
-    listing the candidates (never silently pick one). pid selects exactly.
+    Keyword matching prefers an exact title, then non-console windows
+    (consoles match nearly everything since titles echo the command line);
+    ambiguous partial matches raise listing the candidates (never silently
+    pick one). pid selects exactly.
     """
     win32gui, _ = _require_win32()
     if pid is not None:
@@ -214,6 +229,9 @@ def resolve_target(keyword: str | None = None, pid: int | None = None):
         cands = exact[:1] if exact else cands
         if not cands:
             raise ValueError(f"No visible window matches {keyword!r}")
+        if len(cands) > 1:
+            real = [h for h in cands if not _is_console(h)]
+            cands = real or cands
         if len(cands) > 1:
             shown = ", ".join(repr(win32gui.GetWindowText(h)) for h in cands[:5])
             raise ValueError(f"{len(cands)} windows match {keyword!r} ({shown}) — "

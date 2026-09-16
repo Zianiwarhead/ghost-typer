@@ -29,12 +29,14 @@ def fake_win32(monkeypatch):
         101: ("", True, "Edit", [], 1111),
         200: ("Some Game", True, "GameWnd", [], 2222),
         300: ("My Notepad notes", True, "Notepad", [], 3333),
+        400: ("cmd with bg1 command", True, "ConsoleWindowClass", [], 4444),
+        500: ("bg1 data", True, "Notepad", [], 5555),
     }
     gui.posted = []
     proc.GetWindowThreadProcessId = lambda h: (0, state[h][4])
 
     def EnumWindows(cb, extra):
-        for hwnd in (100, 200, 300):
+        for hwnd in (100, 200, 300, 400, 500):
             if cb(hwnd, extra) is False:
                 break
 
@@ -130,6 +132,19 @@ def test_resolve_exact_beats_partial(fake_win32):
 def test_resolve_ambiguous_refuses(fake_win32):
     with pytest.raises(ValueError, match="be more specific"):
         bg.resolve_target(keyword="notepad")
+
+
+def test_resolve_prefers_real_window_over_console(fake_win32):
+    # 400 is a console echoing the command line; 500 is the real target.
+    top, edit, title = bg.resolve_target(keyword="bg1")
+    assert top == 500
+    assert title == "bg1 data"
+    assert edit == 500  # no edit child -> falls back to top
+
+
+def test_resolve_uses_lone_console(fake_win32):
+    top, _, _title = bg.resolve_target(keyword="cmd with")
+    assert top == 400
 
 
 def test_resolve_by_pid(fake_win32):

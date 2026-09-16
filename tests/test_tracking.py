@@ -4,7 +4,7 @@ import time
 from core.controller import SessionController
 from core.engine import TypingEngine, count_words, snap_to_word_start
 from core.profiles import get_profile
-from main import make_progress_bar
+from main import make_progress_bar, run_countdown
 from tests.conftest import patch_engine
 
 
@@ -96,3 +96,8 @@ def test_progress_bar_shows_words():
     bar = make_progress_bar(8, 11, words=(1, 2))
     assert "word 1/2" in bar
     assert "word" not in make_progress_bar(8, 11)
+
+
+def test_run_countdown_custom_prompt(capsys):
+    run_countdown(0, "Click the FIRST CELL now!")
+    assert "Click the FIRST CELL now!" in capsys.readouterr().out

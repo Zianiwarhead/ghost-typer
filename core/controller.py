@@ -197,10 +197,15 @@ class SessionController:
     def _key_id(key):
         """Normalizes a pynput key to the id scheme engine marks use.
         Returns None for unidentifiable keys (e.g. unicode delivered via
-        VK_PACKET, which listeners may report with char=None)."""
+        VK_PACKET, which listeners may report with char=None). Lone
+        surrogates (emoji heard as halves, e.g. '\\ud83d') map to the shared
+        'surrogate-half' id — see engine._press_char, which marks astral
+        chars the same way."""
         try:
             ch = getattr(key, 'char', None)
             if ch:
+                if len(ch) == 1 and 0xD800 <= ord(ch) <= 0xDFFF:
+                    return 'surrogate-half'
                 return ch.casefold()
         except Exception:
             pass

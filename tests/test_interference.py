@@ -127,6 +127,32 @@ def test_display_key_names_control_chars():
     assert SessionController._display_key('\x13') == 'Ctrl+S'
     assert SessionController._display_key('a') == 'a'
     assert SessionController._display_key(None) is None
+
+
+def test_surrogate_half_maps_to_shared_id():
+    # Emoji heard as lone-surrogate halves must match the engine's mark.
+    assert SessionController._key_id(KeyCode(char='\ud83d')) == 'surrogate-half'
+    assert SessionController._key_id(KeyCode(char='\ude0b')) == 'surrogate-half'
+    assert SessionController._key_id(KeyCode(char='a')) == 'a'
+
+
+def test_marked_surrogate_half_is_ignored():
+    c = _typing_controller()
+    c.mark_own_emit('surrogate-half')
+    assert c._handle_key_press(KeyCode(char='\ud83d')) is False
+    assert c.pause_flag[0] is False
+
+
+def test_engine_marks_astral_as_surrogate_half(monkeypatch):
+    from core.engine import TypingEngine
+    from core.profiles import get_profile
+    from tests.conftest import patch_engine
+    dummy = patch_engine(monkeypatch)
+    marks = []
+    eng = TypingEngine(get_profile("flawless"), [False], emit_hook=marks.append)
+    eng._press_char('😋')
+    assert marks == ['surrogate-half']
+    assert dummy.typed == ['😋']
     assert SessionController._display_key('key:backspace') == 'key:backspace'
 
 

@@ -336,8 +336,14 @@ class TypingEngine:
                 self.keyboard.release(Key.enter)
             return
 
-        # Everything else — letters, numbers, punctuation, symbols
-        self._mark(char.lower())
+        # Everything else — letters, numbers, punctuation, symbols.
+        # Astral chars (emoji) are heard by the listener as lone-surrogate
+        # halves, so mark the shared id (see controller._key_id).
+        lowered = char.lower()
+        if len(char) == 1 and ord(char) > 0xFFFF:
+            self._mark('surrogate-half')
+        else:
+            self._mark(lowered)
         self.keyboard.type(char)
 
     def _calculate_delay(self, char: str, current_word: str = '') -> float:

@@ -59,15 +59,25 @@ First, clone the repo and **change into its folder** — every command below
 must run from there (not from `System32` or your home folder):
 
 ```powershell
-# Windows (use a NORMAL terminal, not Administrator —
+# Windows PowerShell (use a NORMAL terminal, not Administrator —
 # Admin shells start in C:\WINDOWS\System32, which is write-protected)
-cd ~   # or: cd Documents — just get out of System32 first
+cd ~   # get out of System32 first
 git clone https://github.com/Zianiwarhead/ghost-typer.git
 cd ghost-typer
 pip install -e .          # or: pip install -r requirements.txt
 python main.py --list-profiles
 python main.py --profile normal
 python main.py --gui      # Tk mini-GUI (recommended)
+```
+
+```bat
+:: Windows Command Prompt (cmd.exe) — same steps, cmd-style paths.
+:: NOTE: PowerShell commands like Set-Content and $env:TEMP do NOT work here.
+cd %USERPROFILE%
+git clone https://github.com/Zianiwarhead/ghost-typer.git
+cd ghost-typer
+pip install -e .
+python main.py --list-profiles
 ```
 
 ```bash
@@ -199,6 +209,7 @@ Honest limits (platform-enforced):
 
 ```powershell
 python main.py --serve --port 8080
+# KEEP that window open — curl/phone from ANOTHER terminal while it runs:
 # phone browser -> http://<your-pc-ip>:8080/  (dashboard)
 curl -X POST http://127.0.0.1:8080/api/v1/type -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"target":"Notepad","text":"hello","mode":"human"}'
 ```

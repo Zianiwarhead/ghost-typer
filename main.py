@@ -35,7 +35,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.7.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.7.1  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -90,10 +90,10 @@ def print_progress(current: int, total: int, words: tuple | None = None) -> None
 #  COUNTDOWN                                                           #
 # ------------------------------------------------------------------ #
 
-def run_countdown(seconds: int) -> None:
+def run_countdown(seconds: int, prompt: str = "Click your target box NOW!") -> None:
     """Visible countdown — click your target box during this time."""
     print("\n  +-------------------------------------+")
-    print("  |  Click your target box NOW!         |")
+    print(f"  |  {prompt:<35} |")
     print("  |  Typing starts in...                |")
     for i in range(seconds, 0, -1):
         bar = "#" * i + "-" * (seconds - i)
@@ -201,9 +201,19 @@ def run_table_session(
     row_nav: str = 'enter',
     start_cell: tuple = (0, 0),
     use_interference: bool = True,
+    use_focus_lock: bool = True,
 ) -> None:
     """Fills a CSV table cell by cell (see core.tables)."""
     from core.tables import count_cells, fill_table
+
+    focus_guard = FocusGuard(controller.pause_flag, controller.stop_flag)
+    if use_focus_lock and BACKEND_AVAILABLE:
+        target_title = focus_guard.lock_to_current_window()
+        focus_guard.start_watching()
+        print(f"  Locked to: '{target_title}'")
+        print("  Switch away -> auto-pause. Return -> auto-resume.\n")
+    elif use_focus_lock and not BACKEND_AVAILABLE:
+        print(f"  Focus lock unavailable ({focus_guard.unavailable_reason}).\n")
 
     total = count_cells(rows)
     print(f"  [>] Table fill started — {len(rows)} rows, {total} cells "
@@ -222,6 +232,7 @@ def run_table_session(
         pause_checker=controller.wait_if_paused,
         progress_callback=progress, start_cell=start_cell,
     )
+    focus_guard.stop_watching()
     print()
     if finished:
         print("\n  [Done] Table filled.\n")
@@ -656,8 +667,8 @@ def main():
     elif args.file:
         try:
             static_text = get_from_file(args.file)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"[!] {e}")
+        except (OSError, ValueError) as e:
+            print(f"[!] Cannot read file: {e}")
             sys.exit(1)
 
     # Load table source if provided (CSV file or inline spec; fail fast)
@@ -677,8 +688,8 @@ def main():
                 table_label = "inline spec"
             if args.csv_resume:
                 start_cell = parse_cell(args.csv_resume)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"[!] {e}")
+        except (OSError, ValueError) as e:
+            print(f"[!] Cannot load table: {e}")
             sys.exit(1)
         if not args.table_typos:
             profile['errors_enabled'] = False
@@ -816,6 +827,7 @@ def main():
             host, args.port, token, _net_dispatch, controller.is_typing)
         print(f"  Remote API : http://{host}:{args.port}/  (dashboard + POST /api/v1/type)")
         print(f"  API token  : {token}")
+        print("  Keep this window open — curl/phone from ANOTHER terminal while it runs.")
         if args.serve_lan:
             print("  [!] LAN-exposed: anyone on your network holding the token can type "
                   "into your apps. Trusted networks only.")
@@ -916,7 +928,7 @@ def main():
         # Table-fill branch: position in the FIRST cell (or --csv-resume),
         # then Start. No controller resume — re-entry uses --csv-resume.
         if table_rows is not None:
-            run_countdown(args.countdown)
+            run_countdown(args.countdown, "Click the FIRST CELL now!")
             if controller.stop_flag[0]:
                 return
             controller.start_session(
@@ -928,6 +940,7 @@ def main():
                 args.row_key,
                 start_cell,
                 use_interference,
+                use_focus_lock,
             )
             return
 
@@ -996,6 +1009,13 @@ def main():
         )
 
     def on_stop(info=None) -> None:
+        # Esc with no live session (e.g. during countdown) only cancels —
+        # don't print a stale resume summary for a previous session.
+        if not controller.is_typing():
+            if args.hard_stop:
+                controller.clear_session()
+            print("\n  [Cancelled — nothing was typing.]\n")
+            return
         if args.hard_stop:
             controller.clear_session()
             print("\n  [Stopped — resume cleared (--hard-stop)].\n")
