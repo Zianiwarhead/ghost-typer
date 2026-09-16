@@ -10,9 +10,18 @@ return partial trees, never exceptions.
 try:
     import uiautomation as _uia
     _UIA_IMPORT_ERROR = None
-except Exception as e:
+except Exception as e:  # optional dependency: any failure means unavailable
     _uia = None
     _UIA_IMPORT_ERROR = e
+
+if _uia is not None:
+    # The library logs to @AutomationLog.txt in the working dir by default;
+    # redirect to the null device so users' folders stay clean.
+    try:
+        import os as _os
+        _uia.Logger.SetLogFile('NUL' if _os.name == 'nt' else _os.devnull)
+    except Exception:
+        pass
 
 
 def available() -> bool:
