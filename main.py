@@ -34,7 +34,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.4.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.5.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -63,6 +63,7 @@ USAGE EXAMPLES:
   python main.py --bg "Notepad" --file note.txt   # Background paste, no focus needed
   python main.py --bg "Word" --rich --file doc.txt  # Background formatted paste
   python main.py --bg "Notepad" --bg-human --file note.txt  # Paced background keys
+  python main.py --serve --port 8080           # Remote API + phone dashboard
 """
 
 # ------------------------------------------------------------------ #
@@ -225,6 +226,38 @@ def run_table_session(
         print(f"  Resume with: --csv-resume {rr + 1},{cc + 1}\n")
 
 
+class _BgMsgKeyboard:
+    """pynput-shaped keyboard posting WM_CHAR — lets the real TypingEngine
+    (typos, corrections, fatigue, bursts) drive background typing."""
+
+    def __init__(self, hwnd):
+        from core import background as _bg
+        self._bg = _bg
+        self.hwnd = hwnd
+
+    def type(self, s):
+        for ch in s:
+            self._bg.send_char(self.hwnd, ch)
+
+    def press(self, key):
+        from pynput.keyboard import Key
+        try:
+            mapping = {Key.backspace: '\b', Key.enter: '\r',
+                       Key.tab: '\t', Key.space: ' '}
+            if key in mapping:
+                self._bg.send_char(self.hwnd, mapping[key])
+        except Exception:
+            pass
+        # Modifiers and the rest: messages carry no shift state — ignore.
+
+    def release(self, key):
+        pass
+
+    def pressed(self, *keys):
+        from contextlib import nullcontext
+        return nullcontext()
+
+
 class _BgTableTyper:
     """Minimal engine-shaped sender so tables.fill_table works over messages."""
 
@@ -269,6 +302,19 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
     profile = plan['profile']
     stop_flag = controller.stop_flag
 
+    for remaining in range(max(0, min(int(plan.get('countdown', 0)), 60)), 0, -1):
+        if stop_flag[0]:
+            return
+        print(f"\r  Delivering in {remaining}s — position the caret!", end='', flush=True)
+        time.sleep(1)
+    if plan.get('countdown'):
+        print()
+    if stop_flag[0]:
+        return
+    if not bg.verify_window_alive(edit):
+        print("\n[!] Target window closed or hung — aborted.\n")
+        return
+
     if not human:
         # Instant paste via borrowed clipboard (saved + restored).
         saved = bg.save_clipboard()
@@ -276,7 +322,9 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
             if plan['kind'] == 'html':
                 bg.set_clipboard_html(plan['html'])
             elif plan['kind'] == 'table':
-                bg.set_clipboard_html(bg.rows_to_html_table(plan['rows']))
+                bg.set_clipboard_html(
+                    bg.rows_to_html_table(plan['rows'], theme=plan.get('theme'),
+                                          title=plan.get('title', '')))
             else:
                 bg.set_clipboard_text(plan['text'])
             if stop_flag[0]:
@@ -289,8 +337,8 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
         print("\n  [Done] Pasted into background window (clipboard restored).\n")
         return
 
-    # Human mode: paced keystrokes, plain text only, resumable like normal.
-    import random
+    # Human mode: the REAL TypingEngine drives message-posting, so typos,
+    # corrections, fatigue, and bursts all work (see --bg-typos in profile).
     plain = plan['plain']
     total = len(plain)
     start = max(0, min(plan.get('start_index', 0), total))
@@ -304,7 +352,10 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
         sender = _BgTableTyper(edit, stop_flag, base)
 
         def tprogress(done: int, tot: int, r: int, c: int) -> None:
+            controller.wait_if_paused()
             print(f"\r  [cell {done}/{tot} — row {r + 1}/{len(plan['rows'])}]", end='', flush=True)
+            if done % 5 == 0 and not bg.verify_window_alive(edit):
+                stop_flag[0] = True
 
         finished, (rr, cc) = fill_table(
             sender, plan['rows'], col_nav=plan.get('col_nav', 'tab'),
@@ -321,18 +372,20 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
             print(f"  Resume with: --csv-resume {rr + 1},{cc + 1}\n")
         return
 
-    i = start
-    while i < total:
-        if stop_flag[0]:
-            break
+    engine = TypingEngine(profile, stop_flag, emit_hook=None)
+    engine.keyboard = _BgMsgKeyboard(edit)
+
+    def progress(current: int, total: int) -> None:
         controller.wait_if_paused()
-        bg.send_char(edit, plain[i])
-        i += 1
-        controller.update_index(i, total)
-        print_progress(i, total)
-        time.sleep(base * random.uniform(0.8, 1.2))
+        w = engine.get_word_progress()
+        controller.update_index(current, total, w[0], w[1])
+        print_progress(current, total, words=w)
+        if current and current % 20 == 0 and not bg.verify_window_alive(edit):
+            stop_flag[0] = True
+
+    success = engine.type_text(plain, progress_callback=progress, start_index=start)
     print()
-    if i >= total:
+    if success:
         controller.clear_session()
         print("\n  [Done] Typed into background window.\n")
     else:
@@ -357,6 +410,8 @@ def parse_args():
     source.add_argument('--text', '-t', metavar='TEXT')
     source.add_argument('--csv', metavar='PATH',
                         help='Table-fill mode: type a CSV file cell by cell (Tab/Enter nav)')
+    source.add_argument('--table-inline', metavar='SPEC',
+                        help='Table-fill mode without a file: "Title | h1,h2 | r1c1,r1c2 [| ...]"')
 
     profile_group = parser.add_mutually_exclusive_group()
     profile_group.add_argument('--profile', '-p', metavar='NAME', default='normal')
@@ -387,7 +442,9 @@ def parse_args():
     parser.add_argument('--csv-resume', metavar='ROW,COL',
                         help='CSV table-fill: start at cell ROW,COL, 1-based (e.g. 3,1)')
     parser.add_argument('--table-typos', action='store_true',
-                        help='CSV table-fill: allow typos (default off — data integrity)')
+                        help='Table-fill: allow typos (default off — data integrity)')
+    parser.add_argument('--theme', choices=['matrix', 'dracula', 'steel'], default=None,
+                        help='Background table paste: styled theme (default: plain table)')
     parser.add_argument('--bg', metavar='KEYWORD',
                         help='Background mode: deliver to the window whose title contains KEYWORD '
                              'without focusing it (classic apps: Notepad, WordPad, Word — NOT browsers)')
@@ -396,6 +453,16 @@ def parse_args():
                              '(precise alternative to --bg)')
     parser.add_argument('--bg-human', action='store_true',
                         help='Background mode: paced keystrokes instead of instant paste (plain only)')
+    parser.add_argument('--bg-typos', action='store_true',
+                        help='Background human mode: allow typos/corrections (default off)')
+    parser.add_argument('--serve', action='store_true',
+                        help='Remote mode: run the LAN REST API (dashboard + POST /api/v1/type)')
+    parser.add_argument('--port', type=int, default=8080,
+                        help='Remote mode: listen port (default: 8080)')
+    parser.add_argument('--serve-token', metavar='TOKEN',
+                        help='Remote mode: API bearer token (auto-generated if omitted)')
+    parser.add_argument('--serve-lan', action='store_true',
+                        help='Remote mode: bind all interfaces (default: localhost only)')
 
     return parser.parse_args()
 
@@ -452,13 +519,21 @@ def main():
             print(f"[!] {e}")
             sys.exit(1)
 
-    # Load CSV table if provided (fail fast on bad path/content)
-    csv_rows: list | None = None
+    # Load table source if provided (CSV file or inline spec; fail fast)
+    table_rows: list | None = None
+    table_title: str = ""
+    table_label: str = ""
     start_cell: tuple = (0, 0)
-    if args.csv:
-        from core.tables import load_csv, parse_cell
+    if args.csv or args.table_inline:
+        from core.tables import load_csv, parse_cell, parse_inline_table
         try:
-            csv_rows = load_csv(args.csv)
+            if args.csv:
+                table_rows = load_csv(args.csv)
+                table_label = args.csv
+            else:
+                table_title, headers, body = parse_inline_table(args.table_inline)
+                table_rows = [headers] + body
+                table_label = "inline spec"
             if args.csv_resume:
                 start_cell = parse_cell(args.csv_resume)
         except (FileNotFoundError, ValueError) as e:
@@ -481,10 +556,10 @@ def main():
         sys.exit(1)
 
     # Print info
-    if csv_rows is not None:
+    if table_rows is not None:
         from core.tables import count_cells
-        total_chars = sum(len(c) for r in csv_rows for c in r)
-        print(f"  Source     : table: {args.csv} ({len(csv_rows)} rows, {count_cells(csv_rows)} cells)")
+        total_chars = sum(len(c) for r in table_rows for c in r)
+        print(f"  Source     : table: {table_label} ({len(table_rows)} rows, {count_cells(table_rows)} cells)")
         print(f"  Characters : {total_chars}")
         print(f"  Est. time  : {estimate_time('x' * total_chars, profile['wpm'])}")
         print(f"  Row end key: {args.row_key} | Start cell: {start_cell[0] + 1},{start_cell[1] + 1}")
@@ -517,6 +592,86 @@ def main():
     print()
 
     controller = SessionController()
+    api_server = None
+
+    def _net_dispatch(payload: dict) -> tuple:
+        """POST /api/v1/type callback -> (code, message). Builds plan dicts."""
+        if controller.is_typing():
+            return 409, "busy: a typing session is already running"
+        target = str(payload.get('target', '')).strip()
+        text = payload.get('text', '')
+        mode = str(payload.get('mode', 'human')).strip().lower()
+        if not text or not target:
+            return 400, "need 'text' and 'target'"
+        if mode not in ('human', 'rich', 'table'):
+            return 400, "mode must be human, rich, or table"
+        try:
+            nprofile = get_profile(str(payload.get('profile', 'normal')))
+        except (ValueError, AttributeError):
+            return 400, f"unknown profile {payload.get('profile')!r}"
+        nprofile['chat_mode'] = False
+        theme = payload.get('theme') or None
+        if theme is not None:
+            from core.table_themes import THEMES
+            if theme not in THEMES:
+                return 400, f"unknown theme {theme!r}"
+        typos = bool(payload.get('typos', payload.get('obfuscate', False)))
+        if mode == 'human' and not typos:
+            nprofile['errors_enabled'] = False
+            nprofile['error_rate'] = 0.0
+            nprofile['transposition_rate'] = 0.0
+        pid, keyword = None, target
+        if target.isdigit():
+            pid, keyword = int(target), None
+        try:
+            countdown = max(0, min(int(payload.get('countdown', 0)), 60))
+        except (TypeError, ValueError):
+            return 400, "countdown must be seconds 0-60"
+        if mode == 'table':
+            rows_payload = payload.get('rows')
+            try:
+                if isinstance(rows_payload, list) and rows_payload:
+                    title, headers, body = "", rows_payload[0], rows_payload[1:]
+                    if not body:
+                        return 400, "table needs headers + at least one row"
+                    rows = [headers] + body
+                else:
+                    from core.tables import parse_inline_table
+                    title, headers, body = parse_inline_table(text)
+                    rows = [headers] + body
+            except ValueError as e:
+                return 400, str(e)
+            plan = {'kind': 'table', 'rows': rows, 'keyword': keyword, 'pid': pid,
+                    'human': False, 'profile': nprofile, 'theme': theme,
+                    'title': title, 'countdown': countdown}
+        elif mode == 'rich':
+            from core.background import markup_to_html
+            plan = {'kind': 'html', 'html': markup_to_html(text),
+                    'keyword': keyword, 'pid': pid, 'human': False,
+                    'profile': nprofile, 'countdown': countdown}
+        else:
+            plan = {'kind': 'text', 'text': text, 'plain': text,
+                    'keyword': keyword, 'pid': pid, 'human': True,
+                    'profile': nprofile, 'start_index': 0, 'countdown': countdown}
+        controller.start_session(run_background_session, plan, controller)
+        return 200, f"{mode} job dispatched ({len(text)} chars)"
+
+    if args.serve:
+        import secrets
+
+        from core import netserver
+        if not bg.available():
+            print("[!] --serve needs Windows + pywin32 for delivery targets.")
+            sys.exit(1)
+        token = args.serve_token or secrets.token_urlsafe(24)
+        host = '0.0.0.0' if args.serve_lan else '127.0.0.1'
+        api_server, _srv_thread = netserver.start_in_thread(
+            host, args.port, token, _net_dispatch, controller.is_typing)
+        print(f"  Remote API : http://{host}:{args.port}/  (dashboard + POST /api/v1/type)")
+        print(f"  API token  : {token}")
+        if args.serve_lan:
+            print("  [!] LAN-exposed: anyone on your network holding the token can type "
+                  "into your apps. Trusted networks only.")
 
     def _bg_start() -> None:
         """Background delivery flow: resolve window, countdown, dispatch."""
@@ -524,15 +679,17 @@ def main():
 
         bprofile = dict(profile)
         human = bool(args.bg_human)
-        if human and not (bprofile.get('errors_enabled', True) is False):
+        if human and bprofile.get('errors_enabled', True) and not args.bg_typos:
             bprofile['errors_enabled'] = False
             bprofile['error_rate'] = 0.0
             bprofile['transposition_rate'] = 0.0
-            print("  (note: background human mode types clean — typos off)")
+            print("  (note: background human mode types clean — typos off, see --bg-typos)")
+        elif human and args.bg_typos:
+            print("  (background human mode: typos on — full human signature)")
 
         # Resume: plain-text human sessions only (rich/csv re-run fresh).
         if (controller.has_resume() and controller.last_text
-                and controller.last_rich_source is None and csv_rows is None):
+                and controller.last_rich_source is None and table_rows is None):
             info = controller.get_resume_info()
             print(f"\n  Resuming background job from {info['index']}/{info['total']}")
             plan = {'kind': 'text', 'text': controller.last_text,
@@ -544,16 +701,17 @@ def main():
             controller.start_session(run_background_session, plan, controller)
             return
 
-        if csv_rows is not None:
+        if table_rows is not None:
             if human:
-                plan = {'kind': 'table', 'rows': csv_rows, 'keyword': bg_keyword, 'pid': bg_pid,
+                plan = {'kind': 'table', 'rows': table_rows, 'keyword': bg_keyword, 'pid': bg_pid,
                         'human': True, 'profile': bprofile, 'plain': '',
                         'col_nav': 'tab', 'row_nav': args.row_key, 'start_cell': start_cell}
             else:
                 sr, sc = start_cell
-                rows = [csv_rows[sr][sc:]] + csv_rows[sr + 1:] if sr < len(csv_rows) else []
+                rows = [table_rows[sr][sc:]] + table_rows[sr + 1:] if sr < len(table_rows) else []
                 plan = {'kind': 'table', 'rows': rows, 'keyword': bg_keyword, 'pid': bg_pid,
-                        'human': False, 'profile': bprofile}
+                        'human': False, 'profile': bprofile,
+                        'theme': args.theme, 'title': table_title}
         else:
             source_text = static_text
             if source_text is None:
@@ -607,13 +765,13 @@ def main():
 
         # Table-fill branch: position in the FIRST cell (or --csv-resume),
         # then Start. No controller resume — re-entry uses --csv-resume.
-        if csv_rows is not None:
+        if table_rows is not None:
             run_countdown(args.countdown)
             if controller.stop_flag[0]:
                 return
             controller.start_session(
                 run_table_session,
-                csv_rows,
+                table_rows,
                 profile,
                 controller,
                 'tab',
@@ -708,6 +866,11 @@ def main():
             time.sleep(0.5)
     except KeyboardInterrupt:
         print("\n  Goodbye.\n")
+        try:
+            if api_server is not None:
+                api_server.shutdown()
+        except Exception:
+            pass
         controller.stop_listening()
         sys.exit(0)
 

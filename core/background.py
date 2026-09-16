@@ -331,6 +331,38 @@ def send_key(hwnd, vk: int) -> None:
     win32gui.PostMessage(hwnd, win32con.WM_KEYUP, vk, 0)
 
 
+def _send_timeout_ok(hwnd) -> bool:
+    """True if the window's thread answers a null message within 100ms."""
+    user32 = ctypes.windll.user32
+    user32.SendMessageTimeoutW.argtypes = [
+        ctypes.wintypes.HWND, ctypes.wintypes.UINT, ctypes.c_size_t,
+        ctypes.c_ssize_t, ctypes.wintypes.UINT, ctypes.wintypes.UINT,
+        ctypes.POINTER(ctypes.c_ulong)]
+    user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+    result = ctypes.c_ulong()
+    answered = user32.SendMessageTimeoutW(
+        hwnd, 0, 0, 0, 0x0002, 100, ctypes.byref(result))
+    return bool(answered)
+
+
+def verify_window_alive(hwnd) -> bool:
+    """True if the window exists and its thread answers within 100ms.
+
+    Fail-open on unexpected errors (a posted message to a dead window is
+    simply dropped by the OS); IsWindow covers the actually-dead case.
+    """
+    win32gui, _win32con = _require_win32()
+    try:
+        if not win32gui.IsWindow(hwnd):
+            return False
+    except Exception:
+        return False
+    try:
+        return _send_timeout_ok(hwnd)
+    except Exception:
+        return True
+
+
 # ------------------------------------------------------------------ #
 #  Markup -> HTML (reuses our richtext tokens)                         #
 # ------------------------------------------------------------------ #
@@ -387,8 +419,16 @@ def markup_to_html(markup: str) -> str:
     return ''.join(blocks)
 
 
-def rows_to_html_table(rows: list) -> str:
-    """CSV rows -> bordered HTML table (first row = header)."""
+def rows_to_html_table(rows: list, theme: str | None = None, title: str = "") -> str:
+    """CSV rows -> bordered HTML table (first row = header).
+
+    theme None = legacy plain style (unchanged output); otherwise one of
+    table_themes.THEMES rendered via render_themed_table.
+    """
+    if theme:
+        from core.table_themes import render_themed_table
+        headers, body = (rows[0], rows[1:]) if rows else ([], [])
+        return render_themed_table(title, headers, body, theme)
     parts = [('<table border="1" cellspacing="0" cellpadding="6" '
               'style="border-collapse:collapse;font-family:sans-serif;">')]
     for ri, row in enumerate(rows):

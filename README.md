@@ -146,7 +146,12 @@ Typos default off so your data stays exact (`--table-typos` to allow them):
 ```powershell
 python main.py --csv data.csv
 python main.py --csv data.csv --row-key tab --csv-resume 3,1
+python main.py --table-inline "Ops | node,state | us-1,[B]ON[/B]"
 ```
+
+No file? `--table-inline` builds a one-off table inline: `"Title | h1,h2 |
+r1c1,r1c2 | …"` (`\|`/`\,` escapes). Background table pastes take
+`--theme matrix|dracula|steel` for styled output.
 
 ## Background mode (experimental, Windows, CLI-only)
 
@@ -174,6 +179,26 @@ Honest limits (platform-enforced):
   use a fuller title or `--bg-pid`.
 - Only BMP characters travel over `WM_CHAR`; astral characters become `?`.
 
+## Remote control (phone / LAN, Windows)
+
+```powershell
+python main.py --serve --port 8080
+# phone browser -> http://<your-pc-ip>:8080/  (dashboard)
+curl -X POST http://127.0.0.1:8080/api/v1/type -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"target":"Notepad","text":"hello","mode":"human"}'
+```
+
+Modes: `human` (background typing, `--bg-typos` via `typos: true`),
+`rich` (markup → formatted paste), `table` (inline `"T | h1,h2 | r1,r2"` or
+`rows` array → themed paste via `theme`). `GET /api/v1/status` reports
+whether a job is running (a second job gets 409 busy, like the CLI).
+
+Security, stated plainly (no encryption theater here):
+- A bearer **token is required** on every call (auto-generated and printed,
+  or pass `--serve-token`). No token, no typing.
+- Binds **localhost only** unless `--serve-lan` opts into LAN exposure.
+- Traffic is plain HTTP: fine on a trusted home LAN with the token, but
+  assume anyone capturing packets can read it. No public internet, ever.
+
 ## Project layout
 
 ```
@@ -191,6 +216,8 @@ core/inputs.py             clipboard/file/string sources
 core/richtext.py           **bold**/*italic*/# heading markup parser
 core/tables.py             CSV table-fill driver (Tab/Enter nav)
 core/background.py         focus-free delivery: HWND lock, HTML clipboard, WM_PASTE/WM_CHAR
+core/table_themes.py         themed HTML tables (matrix/dracula/steel) for paste
+core/netserver.py            stdlib-only remote API + phone dashboard (token auth)
 assets/                    generated icon.ico/.png
 tests/                     pytest suite (mocked keyboard — no real keypresses)
 ```

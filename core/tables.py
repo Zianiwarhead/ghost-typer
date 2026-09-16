@@ -86,3 +86,54 @@ def parse_cell(s: str) -> tuple:
         return max(0, int(r) - 1), max(0, int(c) - 1)
     except (ValueError, AttributeError):
         raise ValueError(f"Bad --csv-resume value {s!r}: use ROW,COL like 3,1")
+
+
+def split_escaped(s: str, sep: str) -> list:
+    """Splits on unescaped sep.
+
+    A backslash is consumed only when escaping sep or another backslash;
+    otherwise it is preserved verbatim so later split stages still see it
+    (e.g. `\\,` survives a `|` split to be honored by the `,` split).
+    """
+    parts, cur, esc = [], [], False
+    for ch in s:
+        if esc:
+            if ch == sep or ch == '\\':
+                cur.append(ch)
+            else:
+                cur.append('\\')
+                cur.append(ch)
+            esc = False
+        elif ch == '\\':
+            esc = True
+        elif ch == sep:
+            parts.append(''.join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if esc:
+        cur.append('\\')
+    parts.append(''.join(cur))
+    return parts
+
+
+def parse_inline_table(spec: str) -> tuple:
+    """Parses "Title | h1,h2 | r1c1,r1c2 [| ...]" into (title, headers, rows).
+
+    '|' separates sections, ',' separates cells; escape either (or a
+    backslash) with a backslash. Title may be empty; headers and at least
+    one non-empty row are required.
+    """
+    sections = [s.strip() for s in split_escaped(spec or "", '|')]
+    if len(sections) < 3 or not sections[1]:
+        raise ValueError("Inline table needs 'Title | h1,h2 | r1c1,r1c2 [| ...]'")
+    title = sections[0]
+    headers = [c.strip() for c in split_escaped(sections[1], ',')]
+    rows = []
+    for sec in sections[2:]:
+        row = [c.strip() for c in split_escaped(sec, ',')]
+        if any(row):
+            rows.append(row)
+    if not rows:
+        raise ValueError("Inline table needs at least one non-empty row")
+    return title, headers, rows
