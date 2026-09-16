@@ -35,7 +35,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.8.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.9.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -62,6 +62,8 @@ USAGE EXAMPLES:
   python main.py --keep-format               # Ctrl+V clipboard as-is (keeps tables/colors)
   python main.py --ask "what error is shown?" --type-answer
   python main.py --click "Save"              # human-like click by control name
+  python main.py --polish --simplify         # fix + simplify clipboard, then type it
+  python main.py --study --notes revision.md # interactive screen-Q&A, saved
   python main.py --csv data.csv           # Fill a table cell by cell (Tab nav)
   python main.py --csv data.csv --row-key tab --csv-resume 3,1
   python main.py --bg "Notepad" --file note.txt   # Background paste, no focus needed
@@ -511,6 +513,14 @@ def parse_args():
                         help='Brain API key (else GHOST_BRAIN_KEY / OPENAI_API_KEY env)')
     parser.add_argument('--brain-download', action='store_true',
                         help='Download the tiny local model (~200MB) and exit')
+    parser.add_argument('--polish', action='store_true',
+                        help='Proofread clipboard/text/file with the brain, then deliver it normally')
+    parser.add_argument('--simplify', action='store_true',
+                        help='With --polish: also simplify to short plain sentences')
+    parser.add_argument('--notes', metavar='PATH',
+                        help='Study mode: append Q&A to a markdown revision file')
+    parser.add_argument('--study', action='store_true',
+                        help='Study mode: interactive screen-Q&A loop until quit')
     parser.add_argument('--row-key', choices=['enter', 'tab', 'down'], default='enter',
                         help='CSV table-fill: key ending each row (default: enter; Word tables often want tab)')
     parser.add_argument('--csv-resume', metavar='ROW,COL',
@@ -618,6 +628,10 @@ def compose_dry_run(args, profile, static_text, table_rows, table_title) -> str:
             text = plain
         else:
             lines.append(f"  Source     : {len(text)} chars, {count_words(text)} words")
+        if getattr(args, 'polish', False) or getattr(args, 'simplify', False):
+            lines.append("  Polish     : brain fix"
+                         + (" + simplify" if getattr(args, 'simplify', False) else "")
+                         + " (brain NOT called in dry-run)")
         if bg_mode:
             if human and rich_app:
                 lines.append("  Delivery   : background paced keys (plain — formatting needs paste mode)")
@@ -653,6 +667,62 @@ def _dry_finish(lines: list, warnings: list) -> str:
         lines.extend(f"    ! {w}" for w in warnings)
     lines.append("")
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ #
+#  STUDY MODE                                                          #
+# ------------------------------------------------------------------ #
+
+def append_study_note(path: str, question: str, answer: str) -> None:
+    """Appends one Q&A entry to a markdown revision file."""
+    import datetime
+    stamp = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(f"\n## {stamp} — {question[:60]}\n\n**Q:** {question}\n\n**A:** {answer}\n")
+
+
+def run_study_loop(args) -> None:
+    """Interactive screen-Q&A until quit. Re-reads the screen every turn."""
+    print("\n  Study mode — ask about what's on screen. "
+          "Commands: /shot (toggle screenshots), quit.\n")
+    use_shot = bool(args.shot)
+    while True:
+        try:
+            question = input("\n  study> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Study session over.\n")
+            return
+        if not question:
+            continue
+        if question.lower() in ('quit', 'exit', 'q'):
+            print("\n  Study session over.\n")
+            return
+        if question == '/shot':
+            use_shot = not use_shot
+            print(f"  Screenshots {'on' if use_shot else 'off'}.")
+            continue
+        from core.brain import ask as brain_ask
+        from core.brain import build_context
+        tree_text, shot, notes = build_context(screenshot=use_shot)
+        for note in notes:
+            print(f"  (note: {note})")
+        if not tree_text.strip() and shot is None:
+            print("  Nothing readable on screen right now.")
+            continue
+        try:
+            answer = brain_ask(question, tree_text, shot, backend=args.brain,
+                               model=args.brain_model, api_url=args.brain_url,
+                               api_key=args.brain_key)
+        except (RuntimeError, ValueError) as e:
+            print(f"\n  [!] Brain failed: {e}\n")
+            continue
+        print(f"\n  {answer}\n")
+        if args.notes:
+            try:
+                append_study_note(args.notes, question, answer)
+                print(f"  (saved to {args.notes})")
+            except OSError as e:
+                print(f"  [!] Could not save notes: {e}")
 
 
 def main():
@@ -728,9 +798,22 @@ def main():
             print(f"\n[!] Brain failed: {e}\n")
             sys.exit(1)
         print(f"\n  Answer:\n  {brain_answer}\n")
+        if args.notes:
+            try:
+                append_study_note(args.notes, args.ask, brain_answer)
+                print(f"  (saved to {args.notes})")
+            except OSError as e:
+                print(f"  [!] Could not save notes: {e}")
         if not args.type_answer:
             return
         args.text = None  # the answer becomes the source below
+
+    if args.study:
+        run_study_loop(args)
+        return
+
+    if args.notes and not args.ask:
+        print("(note: --notes only saves with --ask/--study — ignoring)")
 
     if args.gui:
         if args.bg:
@@ -796,6 +879,35 @@ def main():
             profile['error_rate'] = 0.0
             profile['transposition_rate'] = 0.0
 
+    if args.dry_run:
+        print(compose_dry_run(args, profile, static_text, table_rows, table_title))
+        return
+
+    # Polish: brain fixes (/simplifies) the input text, then normal delivery.
+    if args.polish or args.simplify:
+        if table_rows is not None:
+            print("  (note: --polish applies to text sources only — table cells pass through)")
+        else:
+            src = static_text
+            if src is None:
+                try:
+                    src = get_from_clipboard()
+                except ValueError as e:
+                    print(f"\n[!] {e}")
+                    sys.exit(1)
+            from core.brain import polish_text
+            print(f"  Polishing with the brain{' + simplifying' if args.simplify else ''} ...")
+            try:
+                static_text = polish_text(
+                    src, simplify=bool(args.simplify), backend=args.brain,
+                    model=args.brain_model, api_url=args.brain_url,
+                    api_key=args.brain_key)
+            except (RuntimeError, ValueError) as e:
+                print(f"\n[!] Polish failed: {e}\n")
+                sys.exit(1)
+            print(f"  Polished: {len(src)} -> {len(static_text)} chars.")
+            print(f"  Preview : {preview_text(static_text)}\n")
+
     use_focus_lock = not args.no_focus_lock
     use_interference = not args.no_interference
     rich_app = args.rich_app if args.rich else None
@@ -806,10 +918,6 @@ def main():
         print("[!] Background mode needs Windows + pywin32 — it is unavailable here.")
         print("    (Remove --bg/--bg-pid to use normal focused typing.)")
         sys.exit(1)
-
-    if args.dry_run:
-        print(compose_dry_run(args, profile, static_text, table_rows, table_title))
-        return
 
     # Print info
     if table_rows is not None:

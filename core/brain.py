@@ -27,6 +27,13 @@ SYSTEM_PROMPT = (
     "If the screen doesn't contain what was asked about, say so plainly "
     "instead of guessing.")
 
+POLISH_PROMPT = (
+    "You are a precise copy editor. Fix spelling, grammar, and punctuation "
+    "in the text below. Preserve meaning, tone, names, numbers, and any "
+    "formatting markers. Return ONLY the corrected text, no commentary.")
+SIMPLIFY_EXTRA = (
+    " Also simplify: shorter sentences, plain everyday words, same meaning.")
+
 LOCAL_MODEL_ID = "onnx-community/SmolLM2-360M-Instruct"
 LOCAL_FILES = ("onnx/model_q4.onnx", "tokenizer.json")
 
@@ -35,20 +42,12 @@ def model_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".ghost-typer", "models", "smolm2")
 
 
-def _api_ask(api_url: str, api_key: str, model: str, question: str,
-             context: str, shot_jpeg, timeout: int, max_tokens: int) -> str:
-    if not api_key:
-        raise RuntimeError("API brain needs a key: --brain-key or GHOST_BRAIN_KEY env "
-                           "(OpenAI, OpenRouter, or any OpenAI-compatible endpoint).")
-    user_block = [{"type": "text", "text": f"Screen context:\n{context}\n\nQuestion: {question}"}]
-    if shot_jpeg:
-        b64 = base64.b64encode(shot_jpeg).decode('ascii')
-        user_block.append({"type": "image_url",
-                           "image_url": {"url": "data:image/jpeg;base64," + b64}})
+def _api_complete(api_url: str, api_key: str, model: str, system: str,
+                  user_blocks: list, timeout: int, max_tokens: int) -> str:
     body = json.dumps({
         "model": model,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT},
-                     {"role": "user", "content": user_block}],
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": user_blocks}],
         "max_tokens": max_tokens,
         "temperature": 0.3,
     }).encode('utf-8')
@@ -71,6 +70,26 @@ def _api_ask(api_url: str, api_key: str, model: str, question: str,
     if isinstance(content, list):  # some endpoints return part lists
         content = ''.join(p.get('text', '') for p in content if isinstance(p, dict))
     return (content or '').strip()
+
+
+def _require_key(api_key: str | None) -> str:
+    key = api_key or os.environ.get('GHOST_BRAIN_KEY') or os.environ.get('OPENAI_API_KEY')
+    if not key:
+        raise RuntimeError("API brain needs a key: --brain-key or GHOST_BRAIN_KEY env "
+                           "(OpenAI, OpenRouter, or any OpenAI-compatible endpoint).")
+    return key
+
+
+def _api_ask(api_url: str, api_key: str, model: str, question: str,
+             context: str, shot_jpeg, timeout: int, max_tokens: int) -> str:
+    key = _require_key(api_key)
+    user_block = [{"type": "text", "text": f"Screen context:\n{context}\n\nQuestion: {question}"}]
+    if shot_jpeg:
+        b64 = base64.b64encode(shot_jpeg).decode('ascii')
+        user_block.append({"type": "image_url",
+                           "image_url": {"url": "data:image/jpeg;base64," + b64}})
+    return _api_complete(api_url, key, model, SYSTEM_PROMPT, user_block,
+                         timeout, max_tokens)
 
 
 def local_ready() -> tuple:
@@ -108,7 +127,7 @@ def download_model() -> str:
     return dest
 
 
-def _local_ask(question: str, context: str, max_tokens: int) -> str:
+def _local_complete(system: str, user_text: str, max_tokens: int) -> str:
     import numpy as np
     ready, reason = local_ready()
     if not ready:
@@ -125,8 +144,8 @@ def _local_ask(question: str, context: str, max_tokens: int) -> str:
         return tok.encode(s).ids
 
     prompt_ids = enc(
-        f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
-        f"<|im_start|>user\nScreen context:\n{context}\n\nQuestion: {question}<|im_end|>\n"
+        f"<|im_start|>system\n{system}<|im_end|>\n"
+        f"<|im_start|>user\n{user_text}<|im_end|>\n"
         f"<|im_start|>assistant\n")
     ids = list(prompt_ids)
     for _ in range(max(1, max_tokens)):
@@ -136,6 +155,30 @@ def _local_ask(question: str, context: str, max_tokens: int) -> str:
             break
         ids.append(nxt)
     return tok.decode(ids[len(prompt_ids):]).strip()
+
+
+def _local_ask(question: str, context: str, max_tokens: int) -> str:
+    return _local_complete(
+        SYSTEM_PROMPT,
+        f"Screen context:\n{context}\n\nQuestion: {question}", max_tokens)
+
+
+def polish_text(text: str, simplify: bool = False, backend: str = 'api',
+                model: str | None = None,
+                api_url: str = 'https://api.openai.com/v1',
+                api_key: str | None = None, timeout: int = 60,
+                max_tokens: int | None = None) -> str:
+    """Proofreads (and optionally simplifies) text. Returns corrected text."""
+    system = POLISH_PROMPT + (SIMPLIFY_EXTRA if simplify else "")
+    if max_tokens is None:
+        max_tokens = min(max(len(text) // 2 + 200, 400), 2000)
+    if backend == 'local':
+        return _local_complete(system, text, max_tokens)
+    if backend != 'api':
+        raise ValueError(f"unknown brain backend {backend!r} (api|local)")
+    key = _require_key(api_key)
+    return _api_complete(api_url, key, model or 'gpt-4o-mini', system,
+                         [{"type": "text", "text": text}], timeout, max_tokens)
 
 
 def ask(question: str, context: str = "", shot_jpeg=None, backend: str = 'api',

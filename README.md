@@ -253,6 +253,29 @@ Two backends, one flag (`--brain api|local`):
 Eyes are Windows + `pip install uiautomation`; everything else degrades to a
 clear message. Screenshots only ever go to the endpoint you configure.
 
+## Polish + study (revision workflows, not live tests)
+
+`--polish` runs clipboard/text/file input through the brain (spelling,
+grammar, punctuation), then delivers it through the normal pipeline —
+focused typing, `--rich`, or `--bg` all work unchanged:
+
+```powershell
+python main.py --polish                        # fix clipboard, then type it
+python main.py --polish --simplify --file draft.txt   # + plain short sentences
+```
+
+`--study` opens an interactive screen-Q&A loop for coursework revision
+(`/shot` toggles screenshots, `quit` ends), and `--notes` appends every
+answer to a markdown revision file:
+
+```powershell
+python main.py --study --notes revision.md
+python main.py --ask "explain this dialog" --notes revision.md
+```
+
+Built for your own documents and revision — the fair-use note at the top
+still stands: nothing here is for proctored tests or hiring screens.
+
 ## Project layout
 
 ```
