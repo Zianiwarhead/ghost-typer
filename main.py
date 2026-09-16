@@ -3,12 +3,13 @@ main.py — GhostTyper entry point.
 """
 
 import argparse
+import os
 import sys
 import time
 
 from core import background as bg
 from core.controller import SessionController
-from core.engine import TypingEngine
+from core.engine import TypingEngine, count_words
 from core.focus_guard import BACKEND_AVAILABLE, FocusGuard
 from core.inputs import (
     estimate_time,
@@ -34,7 +35,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.6.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.7.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -64,6 +65,9 @@ USAGE EXAMPLES:
   python main.py --bg "Word" --rich --file doc.txt  # Background formatted paste
   python main.py --bg "Notepad" --bg-human --file note.txt  # Paced background keys
   python main.py --serve --port 8080           # Remote API + phone dashboard
+  python main.py --watch C:\\drops --bg "Word"  # Paste dropped .txt/.md files
+  python main.py --doctor                      # Environment self-check
+  python main.py --file essay.txt --dry-run    # Preview the delivery plan
 """
 
 # ------------------------------------------------------------------ #
@@ -291,16 +295,25 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
     from core import background as bg
 
     keyword = plan.get('keyword')
+    result = plan.get('result')
+
+    def _mark(ok: bool, reason: str = "") -> None:
+        if result is not None:
+            result['ok'] = ok
+            result['reason'] = reason
+
     try:
         _top, edit, title = bg.resolve_target(keyword=keyword, pid=plan.get('pid'))
     except (RuntimeError, ValueError) as e:
         print(f"\n[!] {e}\n")
+        _mark(False, str(e))
         return
     print(f"  Locked (background) to: '{title}' — it stays unfocused, keep working.\n")
 
     if bg.is_web_target(title, keyword or ""):
         print(f"\n[!] {bg.web_target_guidance(title)}\n")
         controller.clear_session()
+        _mark(False, "web target refused")
         return
 
     human = plan.get('human', False)
@@ -309,15 +322,18 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
 
     for remaining in range(max(0, min(int(plan.get('countdown', 0)), 60)), 0, -1):
         if stop_flag[0]:
+            _mark(False, "stopped")
             return
         print(f"\r  Delivering in {remaining}s — position the caret!", end='', flush=True)
         time.sleep(1)
     if plan.get('countdown'):
         print()
     if stop_flag[0]:
+        _mark(False, "stopped")
         return
     if not bg.verify_window_alive(edit):
         print("\n[!] Target window closed or hung — aborted.\n")
+        _mark(False, "target dead")
         return
 
     if not human:
@@ -340,6 +356,7 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
             bg.restore_clipboard(saved)
         controller.clear_session()
         print("\n  [Done] Pasted into background window (clipboard restored).\n")
+        _mark(True)
         return
 
     # Human mode: the REAL TypingEngine drives message-posting, so typos,
@@ -372,9 +389,11 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
         if finished:
             controller.clear_session()
             print("\n  [Done] Table typed into background window.\n")
+            _mark(True)
         else:
             print(f"\n  [Soft-stopped at row {rr + 1}, col {cc + 1}]")
             print(f"  Resume with: --csv-resume {rr + 1},{cc + 1}\n")
+            _mark(False, "stopped")
         return
 
     engine = TypingEngine(profile, stop_flag, emit_hook=None)
@@ -393,10 +412,12 @@ def run_background_session(plan: dict, controller: SessionController) -> None:
     if success:
         controller.clear_session()
         print("\n  [Done] Typed into background window.\n")
+        _mark(True)
     else:
         info = controller.get_resume_info()
         print(f"\n  [Soft-stopped at {info['index']}/{info['total']}]")
         print("  Press Ctrl+Alt+S to resume.\n")
+        _mark(False, "stopped")
 
 # ------------------------------------------------------------------ #
 #  ARGS                                                                #
@@ -468,6 +489,14 @@ def parse_args():
                         help='Remote mode: API bearer token (auto-generated if omitted)')
     parser.add_argument('--serve-lan', action='store_true',
                         help='Remote mode: bind all interfaces (default: localhost only)')
+    parser.add_argument('--watch', metavar='DIR',
+                        help='Watch mode: paste .txt/.md files dropped in DIR to the --bg target')
+    parser.add_argument('--interval', type=int, default=30,
+                        help='Watch mode: poll DIR every N seconds (default: 30)')
+    parser.add_argument('--doctor', action='store_true',
+                        help='Check environment (deps, clipboard, backends) and exit')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Print exactly what would be delivered, then exit (no side effects)')
 
     return parser.parse_args()
 
@@ -475,9 +504,116 @@ def parse_args():
 #  MAIN                                                                #
 # ------------------------------------------------------------------ #
 
+# ------------------------------------------------------------------ #
+#  DRY RUN                                                           #
+# ------------------------------------------------------------------ #
+
+def compose_dry_run(args, profile, static_text, table_rows, table_title) -> str:
+    """Describes exactly what the flags would deliver. Side-effect free
+    except reading the clipboard (when it's the source) and listing
+    windows (to resolve --bg targets)."""
+    from core.inputs import estimate_time
+    from core.tables import count_cells
+    lines = ["", "  Dry run — nothing will be typed, pasted, or copied.", ""]
+    warnings: list = []
+
+    if getattr(args, 'serve', False):
+        lines.append(f"  Mode       : remote API on port {args.port} "
+                     f"({'LAN-exposed' if args.serve_lan else 'localhost only'})")
+        lines.append(f"  Token      : {'provided' if args.serve_token else 'auto-generated'}")
+        lines.append("  Endpoints  : GET / (dashboard), GET /api/v1/status, POST /api/v1/type")
+        if args.serve_lan and not args.serve_token:
+            warnings.append("LAN mode with an auto token — copy it from this terminal, never commit it.")
+        return _dry_finish(lines, warnings)
+
+    if getattr(args, 'watch', None):
+        lines.append(f"  Mode       : watch {args.watch} every {args.interval}s")
+        lines.append("  Routing    : .txt -> text paste, .md -> formatted paste")
+        lines.append("  Files      : done/ on success, failed/ otherwise (never deleted)")
+        if not (args.bg or args.bg_pid):
+            warnings.append("--watch needs --bg/--bg-pid (drop-folder delivery is background-only).")
+        return _dry_finish(lines, warnings)
+
+    bg_mode = bool(args.bg or args.bg_pid)
+    human = bool(args.bg_human)
+    rich_app = args.rich_app if args.rich else None
+
+    if table_rows is not None:
+        cells = count_cells(table_rows)
+        chars = sum(len(c) for r in table_rows for c in r)
+        lines.append(f"  Source     : table ({len(table_rows)} rows, {cells} cells, {chars} chars)")
+        if bg_mode:
+            if human:
+                lines.append(f"  Delivery   : background paced keys, Tab nav, row end {args.row_key}")
+            else:
+                from core.background import rows_to_html_table
+                payload = rows_to_html_table(table_rows, theme=args.theme, title=table_title)
+                lines.append(f"  Delivery   : background HTML paste ({len(payload.encode('utf-8'))} bytes"
+                             + (f", theme {args.theme}" if args.theme else ", plain table") + ")")
+        else:
+            lines.append(f"  Delivery   : focused typing, Tab nav, row end {args.row_key}")
+        lines.append(f"  Typos      : {'on' if args.table_typos else 'off (table default)'}")
+    else:
+        text = static_text
+        if text is None:
+            try:
+                text = get_from_clipboard()
+            except ValueError:
+                text = ""
+                warnings.append("clipboard is empty — nothing to deliver.")
+        if rich_app:
+            from core.richtext import has_markup, strip_rich
+            plain = strip_rich(text)
+            lines.append(f"  Source     : {len(plain)} plain chars"
+                         + (" (markup found)" if has_markup(text)
+                            else " (NOTE: no markup — would type plain)"))
+            text = plain
+        else:
+            lines.append(f"  Source     : {len(text)} chars, {count_words(text)} words")
+        if bg_mode:
+            if human and rich_app:
+                lines.append("  Delivery   : background paced keys (plain — formatting needs paste mode)")
+            elif human:
+                lines.append("  Delivery   : background paced keys")
+            else:
+                lines.append("  Delivery   : background instant paste (clipboard borrowed + restored)")
+        else:
+            lines.append(f"  Delivery   : focused typing ({profile.get('name')}, {profile['wpm']} WPM)")
+            lines.append(f"  Est. time  : {estimate_time(text, profile['wpm'])}")
+
+    if bg_mode:
+        target = f"pid {args.bg_pid}" if args.bg_pid else f"window matching '{args.bg}'"
+        try:
+            _top, _edit, title = bg.resolve_target(keyword=args.bg, pid=args.bg_pid)
+            lines.append(f"  Target     : '{title}' (resolves NOW)")
+            if bg.is_web_target(title, args.bg or ""):
+                warnings.append("target looks like a browser/chat app — delivery would be refused.")
+        except (RuntimeError, ValueError) as e:
+            lines.append(f"  Target     : {target} (UNRESOLVED: {e})")
+            warnings.append("position the caret and make sure the window exists before running for real.")
+        if not human:
+            warnings.append("paste borrows the clipboard for a split second (saved + restored).")
+    elif rich_app:
+        lines.append(f"  Styles     : {rich_app} shortcuts (**bold**, *italic*, # headings)")
+    return _dry_finish(lines, warnings)
+
+
+def _dry_finish(lines: list, warnings: list) -> str:
+    if warnings:
+        lines.append("")
+        lines.append("  Warnings:")
+        lines.extend(f"    ! {w}" for w in warnings)
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main():
     print(BANNER)
     args = parse_args()
+
+    if args.doctor:
+        from core.doctor import run as run_doctor
+        sys.exit(run_doctor())
 
     if args.list_profiles:
         list_profiles()
@@ -559,6 +695,10 @@ def main():
         print("[!] Background mode needs Windows + pywin32 — it is unavailable here.")
         print("    (Remove --bg/--bg-pid to use normal focused typing.)")
         sys.exit(1)
+
+    if args.dry_run:
+        print(compose_dry_run(args, profile, static_text, table_rows, table_title))
+        return
 
     # Print info
     if table_rows is not None:
@@ -871,9 +1011,75 @@ def main():
 
     print("  Listening for hotkeys...\n")
 
+    watch = None
+    if args.watch:
+        from core import watcher as _watcher
+        if not (bg_keyword or bg_pid):
+            print("[!] --watch needs --bg/--bg-pid (drop-folder delivery is background-only).")
+            sys.exit(1)
+        if not os.path.isdir(args.watch):
+            print(f"[!] Watch dir not found: {args.watch}")
+            sys.exit(1)
+        _watcher.ensure_dirs(args.watch)
+        try:
+            _top, _edit, _title = bg.resolve_target(keyword=bg_keyword, pid=bg_pid)
+            if bg.is_web_target(_title, bg_keyword or ""):
+                print(f"\n[!] {bg.web_target_guidance(_title)}\n")
+                sys.exit(1)
+            print(f"  Watching  : {args.watch} every {args.interval}s -> '{_title}'")
+            print("  Position the caret once — dropped .txt/.md files paste themselves.\n")
+        except (RuntimeError, ValueError) as e:
+            print(f"\n[!] {e}\n")
+            sys.exit(1)
+        watch = {'next': 0.0}
+
+    def _watch_poll() -> None:
+        from core import watcher as _watcher
+        if controller.is_typing():
+            print("  [watch] job running — skipping this cycle.")
+            return
+        job = _watcher.scan(args.watch)
+        if job is None:
+            return
+        name = os.path.basename(job)
+        print(f"\n  [watch] picked up '{name}'")
+        try:
+            kind, content = _watcher.load_job(job)
+        except ValueError as e:
+            print(f"  [watch] bad file: {e}")
+            print(f"  [watch] -> failed/{name}")
+            _watcher.settle(job, False)
+            return
+        if kind == 'rich':
+            from core.background import markup_to_html
+            plan = {'kind': 'html', 'html': markup_to_html(content),
+                    'keyword': bg_keyword, 'pid': bg_pid,
+                    'human': False, 'profile': dict(profile), 'countdown': 0}
+        else:
+            plan = {'kind': 'text', 'text': content,
+                    'keyword': bg_keyword, 'pid': bg_pid,
+                    'human': False, 'profile': dict(profile), 'countdown': 0}
+        result: dict = {}
+        plan['result'] = result
+        controller.start_session(run_background_session, plan, controller)
+        time.sleep(0.3)
+        deadline = time.time() + 120
+        while controller.is_typing() and time.time() < deadline:
+            time.sleep(0.2)
+        if controller.is_typing():
+            print("  [watch] still running after 120s — leaving file for next cycle.")
+            return
+        ok = bool(result.get('ok', False))
+        dest = _watcher.settle(job, ok)
+        print(f"  [watch] {'done' if ok else 'failed'} -> {dest}"
+              + (f" ({result.get('reason', '')})" if not ok and result.get('reason') else ""))
+
     try:
         while True:
             time.sleep(0.5)
+            if watch is not None and time.time() >= watch['next']:
+                watch['next'] = time.time() + max(5, args.interval)
+                _watch_poll()
     except KeyboardInterrupt:
         print("\n  Goodbye.\n")
         try:

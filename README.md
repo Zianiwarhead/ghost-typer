@@ -162,9 +162,24 @@ elsewhere. Reuses every source above:
 python main.py --bg "Notepad" --file note.txt      # instant paste
 python main.py --bg "Word" --rich --file doc.txt   # formatted paste (bold, tables)
 python main.py --bg "Word" --csv data.csv      # CSV -> HTML table paste
+python main.py --bg "Word" --csv data.csv --theme matrix
 python main.py --bg "Notepad" --bg-human --file note.txt  # paced keystrokes
 python main.py --bg-pid 12345 --file note.txt      # precise PID targeting
 ```
+
+## Watch mode, doctor, dry-run
+
+```powershell
+python main.py --watch C:\drops --bg "Word"        # paste dropped .txt/.md files
+python main.py --doctor                            # environment self-check
+python main.py --file essay.txt --dry-run          # preview the plan, change nothing
+```
+
+Watch mode polls a folder (default every 30s, `--interval N`) alongside the
+hotkeys: `.txt` files paste as text, `.md` as formatted HTML. Finished files
+move to `done/`, failures to `failed/` — nothing is ever deleted, and a
+running job means the cycle is skipped (no overlap). `--watch` requires a
+`--bg` target; position the caret once and drops deliver themselves.
 
 How it works: the target is resolved to its edit control, the payload goes
 on the clipboard (your text clipboard is saved and restored), and a `WM_PASTE`
@@ -217,6 +232,8 @@ core/inputs.py             clipboard/file/string sources
 core/richtext.py           **bold**/*italic*/# heading markup parser
 core/tables.py             CSV table-fill driver (Tab/Enter nav)
 core/background.py         focus-free delivery: HWND lock, HTML clipboard, WM_PASTE/WM_CHAR
+core/watcher.py            drop-folder automation (scan/load/done-failed routing)
+core/doctor.py             environment self-check (--doctor)
 core/table_themes.py         themed HTML tables (matrix/dracula/steel) for paste
 core/netserver.py            stdlib-only remote API + phone dashboard (token auth)
 assets/                    generated icon.ico/.png
