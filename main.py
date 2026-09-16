@@ -6,6 +6,7 @@ import argparse
 import sys
 import time
 
+from core import background as bg
 from core.controller import SessionController
 from core.engine import TypingEngine
 from core.focus_guard import BACKEND_AVAILABLE, FocusGuard
@@ -33,7 +34,7 @@ BANNER = r"""
   \_____|_| |_|\___/|___/\__|    |_|\__, | .__/ \___|_|
                                      __/ | |
                                     |___/|_|
-  Realistic Keystroke Simulation Engine  -  v2.3.0  (soft-stop + resume)
+  Realistic Keystroke Simulation Engine  -  v2.4.0  (soft-stop + resume)
 """
 
 HELP_TEXT = """
@@ -59,6 +60,9 @@ USAGE EXAMPLES:
   python main.py --rich --file doc.txt    # **Bold**, *italic*, # headings (Word/Docs)
   python main.py --csv data.csv           # Fill a table cell by cell (Tab nav)
   python main.py --csv data.csv --row-key tab --csv-resume 3,1
+  python main.py --bg "Notepad" --file note.txt   # Background paste, no focus needed
+  python main.py --bg "Word" --rich --file doc.txt  # Background formatted paste
+  python main.py --bg "Notepad" --bg-human --file note.txt  # Paced background keys
 """
 
 # ------------------------------------------------------------------ #
@@ -220,6 +224,122 @@ def run_table_session(
         print(f"\n  [Soft-stopped at row {rr + 1}, col {cc + 1}]")
         print(f"  Resume with: --csv-resume {rr + 1},{cc + 1}\n")
 
+
+class _BgTableTyper:
+    """Minimal engine-shaped sender so tables.fill_table works over messages."""
+
+    def __init__(self, hwnd, stop_flag, delay: float):
+        from core import background as _bg
+        self._bg = _bg
+        self.hwnd = hwnd
+        self.stop_flag = stop_flag
+        self.delay = delay
+
+    def type_text(self, text: str, progress_callback=None, start_index: int = 0) -> bool:
+        for ch in text[start_index:]:
+            if self.stop_flag[0]:
+                return False
+            self._bg.send_char(self.hwnd, ch)
+            time.sleep(self.delay)
+        return True
+
+    def _tap(self, key, key_id: str) -> None:
+        from pynput.keyboard import Key
+        vk = {Key.tab: 0x09, Key.enter: 0x0D, Key.down: 0x28}.get(key, 0x0D)
+        self._bg.send_key(self.hwnd, vk)
+
+
+def run_background_session(plan: dict, controller: SessionController) -> None:
+    """Delivers plan to a background window (no focus steal). See --bg.
+
+    plan keys: kind ('text'|'html'|'table'), text/html/rows, keyword, human,
+    profile, start_index/start_cell, plain (session text for human mode).
+    """
+    from core import background as bg
+
+    keyword = plan.get('keyword')
+    try:
+        _top, edit, title = bg.resolve_target(keyword=keyword, pid=plan.get('pid'))
+    except (RuntimeError, ValueError) as e:
+        print(f"\n[!] {e}\n")
+        return
+    print(f"  Locked (background) to: '{title}' — it stays unfocused, keep working.\n")
+
+    human = plan.get('human', False)
+    profile = plan['profile']
+    stop_flag = controller.stop_flag
+
+    if not human:
+        # Instant paste via borrowed clipboard (saved + restored).
+        saved = bg.save_clipboard()
+        try:
+            if plan['kind'] == 'html':
+                bg.set_clipboard_html(plan['html'])
+            elif plan['kind'] == 'table':
+                bg.set_clipboard_html(bg.rows_to_html_table(plan['rows']))
+            else:
+                bg.set_clipboard_text(plan['text'])
+            if stop_flag[0]:
+                return
+            bg.paste_to_hwnd(edit)
+            time.sleep(0.6)  # let the target process the paste
+        finally:
+            bg.restore_clipboard(saved)
+        controller.clear_session()
+        print("\n  [Done] Pasted into background window (clipboard restored).\n")
+        return
+
+    # Human mode: paced keystrokes, plain text only, resumable like normal.
+    import random
+    plain = plan['plain']
+    total = len(plain)
+    start = max(0, min(plan.get('start_index', 0), total))
+    controller.save_session(plain, profile)
+    controller.update_index(start, total)
+    base = 60.0 / (max(profile['wpm'], 1) * 5)
+    print(f"  [>] Background typing — {total} chars from {start}.\n")
+
+    if plan['kind'] == 'table':
+        from core.tables import fill_table
+        sender = _BgTableTyper(edit, stop_flag, base)
+
+        def tprogress(done: int, tot: int, r: int, c: int) -> None:
+            print(f"\r  [cell {done}/{tot} — row {r + 1}/{len(plan['rows'])}]", end='', flush=True)
+
+        finished, (rr, cc) = fill_table(
+            sender, plan['rows'], col_nav=plan.get('col_nav', 'tab'),
+            row_nav=plan.get('row_nav', 'enter'), stop_flag=stop_flag,
+            pause_checker=controller.wait_if_paused,
+            progress_callback=tprogress, start_cell=plan.get('start_cell', (0, 0)),
+        )
+        print()
+        if finished:
+            controller.clear_session()
+            print("\n  [Done] Table typed into background window.\n")
+        else:
+            print(f"\n  [Soft-stopped at row {rr + 1}, col {cc + 1}]")
+            print(f"  Resume with: --csv-resume {rr + 1},{cc + 1}\n")
+        return
+
+    i = start
+    while i < total:
+        if stop_flag[0]:
+            break
+        controller.wait_if_paused()
+        bg.send_char(edit, plain[i])
+        i += 1
+        controller.update_index(i, total)
+        print_progress(i, total)
+        time.sleep(base * random.uniform(0.8, 1.2))
+    print()
+    if i >= total:
+        controller.clear_session()
+        print("\n  [Done] Typed into background window.\n")
+    else:
+        info = controller.get_resume_info()
+        print(f"\n  [Soft-stopped at {info['index']}/{info['total']}]")
+        print("  Press Ctrl+Alt+S to resume.\n")
+
 # ------------------------------------------------------------------ #
 #  ARGS                                                                #
 # ------------------------------------------------------------------ #
@@ -268,6 +388,14 @@ def parse_args():
                         help='CSV table-fill: start at cell ROW,COL, 1-based (e.g. 3,1)')
     parser.add_argument('--table-typos', action='store_true',
                         help='CSV table-fill: allow typos (default off — data integrity)')
+    parser.add_argument('--bg', metavar='KEYWORD',
+                        help='Background mode: deliver to the window whose title contains KEYWORD '
+                             'without focusing it (classic apps: Notepad, WordPad, Word — NOT browsers)')
+    parser.add_argument('--bg-pid', metavar='PID', type=int,
+                        help='Background mode: deliver to the window owned by PID '
+                             '(precise alternative to --bg)')
+    parser.add_argument('--bg-human', action='store_true',
+                        help='Background mode: paced keystrokes instead of instant paste (plain only)')
 
     return parser.parse_args()
 
@@ -288,6 +416,8 @@ def main():
         return
 
     if args.gui:
+        if args.bg:
+            print("(note: --bg is CLI-only for now — the GUI types into the focused window as usual)")
         try:
             from gui import launch_gui
         except ImportError as e:
@@ -342,6 +472,13 @@ def main():
     use_focus_lock = not args.no_focus_lock
     use_interference = not args.no_interference
     rich_app = args.rich_app if args.rich else None
+    bg_keyword = args.bg
+    bg_pid = args.bg_pid
+    bg_target = f"pid {bg_pid}" if bg_pid else f"window matching '{bg_keyword}'"
+    if (bg_keyword or bg_pid) and not bg.available():
+        print("[!] Background mode needs Windows + pywin32 — it is unavailable here.")
+        print("    (Remove --bg/--bg-pid to use normal focused typing.)")
+        sys.exit(1)
 
     # Print info
     if csv_rows is not None:
@@ -368,6 +505,9 @@ def main():
     print(f"  Focus lock : {'on (auto-pause on window switch)' if use_focus_lock and BACKEND_AVAILABLE else 'off'}")
     print(f"  Stop mode  : {'hard-stop (Esc clears resume)' if args.hard_stop else 'soft-stop (Esc keeps place for resume)'}")
     print(f"  Newlines   : {'Shift+Enter (chat mode)' if args.chat_mode else 'Enter (normal mode — Word, Notepad, Docs)'}")
+    if bg_keyword or bg_pid:
+        print(f"  Background : to {bg_target} "
+              f"({'paced keys' if args.bg_human else 'instant paste'}) — focus + interference guards off")
     print()
     print("  Hotkeys:")
     print("    Ctrl+Alt+S  ->  Start typing / Resume")
@@ -378,9 +518,91 @@ def main():
 
     controller = SessionController()
 
+    def _bg_start() -> None:
+        """Background delivery flow: resolve window, countdown, dispatch."""
+        from core.richtext import has_markup, strip_rich
+
+        bprofile = dict(profile)
+        human = bool(args.bg_human)
+        if human and not (bprofile.get('errors_enabled', True) is False):
+            bprofile['errors_enabled'] = False
+            bprofile['error_rate'] = 0.0
+            bprofile['transposition_rate'] = 0.0
+            print("  (note: background human mode types clean — typos off)")
+
+        # Resume: plain-text human sessions only (rich/csv re-run fresh).
+        if (controller.has_resume() and controller.last_text
+                and controller.last_rich_source is None and csv_rows is None):
+            info = controller.get_resume_info()
+            print(f"\n  Resuming background job from {info['index']}/{info['total']}")
+            plan = {'kind': 'text', 'text': controller.last_text,
+                    'plain': controller.last_text, 'keyword': bg_keyword, 'pid': bg_pid,
+                    'human': True, 'profile': bprofile, 'start_index': info['index']}
+            run_countdown(max(2, min(args.countdown, 3)))
+            if controller.stop_flag[0]:
+                return
+            controller.start_session(run_background_session, plan, controller)
+            return
+
+        if csv_rows is not None:
+            if human:
+                plan = {'kind': 'table', 'rows': csv_rows, 'keyword': bg_keyword, 'pid': bg_pid,
+                        'human': True, 'profile': bprofile, 'plain': '',
+                        'col_nav': 'tab', 'row_nav': args.row_key, 'start_cell': start_cell}
+            else:
+                sr, sc = start_cell
+                rows = [csv_rows[sr][sc:]] + csv_rows[sr + 1:] if sr < len(csv_rows) else []
+                plan = {'kind': 'table', 'rows': rows, 'keyword': bg_keyword, 'pid': bg_pid,
+                        'human': False, 'profile': bprofile}
+        else:
+            source_text = static_text
+            if source_text is None:
+                try:
+                    source_text = get_from_clipboard()
+                    print(f"\n  Clipboard: {preview_text(source_text)}")
+                except ValueError as e:
+                    print(f"\n[!] {e}")
+                    return
+            if rich_app:
+                if human:
+                    print("  (note: formatting needs paste mode — background human types plain text)")
+                    plain = strip_rich(source_text)
+                    plan = {'kind': 'text', 'text': plain, 'plain': plain,
+                            'keyword': bg_keyword, 'pid': bg_pid, 'human': True,
+                            'profile': bprofile, 'start_index': 0}
+                else:
+                    if not has_markup(source_text):
+                        print("  (note: --rich found no markup — pasting as formatted text anyway)")
+                    plan = {'kind': 'html', 'html': bg.markup_to_html(source_text),
+                            'keyword': bg_keyword, 'pid': bg_pid, 'human': False, 'profile': bprofile}
+            else:
+                if human:
+                    plan = {'kind': 'text', 'text': source_text, 'plain': source_text,
+                            'keyword': bg_keyword, 'pid': bg_pid, 'human': True,
+                            'profile': bprofile, 'start_index': 0}
+                else:
+                    plan = {'kind': 'text', 'text': source_text,
+                            'keyword': bg_keyword, 'pid': bg_pid, 'human': False, 'profile': bprofile}
+
+        try:
+            _top, _edit, _title = bg.resolve_target(keyword=bg_keyword, pid=bg_pid)  # fail fast
+            print(f"  Target found: '{_title}' — position the caret, then it stays unfocused.")
+        except (RuntimeError, ValueError) as e:
+            print(f"\n[!] {e}\n")
+            return
+        run_countdown(args.countdown)
+        if controller.stop_flag[0]:
+            return
+        controller.start_session(run_background_session, plan, controller)
+
     def on_start() -> None:
         if controller.is_typing():
             print("[!] Already typing. Press Esc to stop first.")
+            return
+
+        # Background branch: deliver without focusing (classic apps only).
+        if bg_keyword or bg_pid:
+            _bg_start()
             return
 
         # Table-fill branch: position in the FIRST cell (or --csv-resume),

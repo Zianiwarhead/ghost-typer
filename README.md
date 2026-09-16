@@ -24,6 +24,7 @@ MIT open source — use it, share it, be happy.
 - **Chat-safe newlines:** `--chat-mode` uses Shift+Enter (Claude/ChatGPT/Discord)
 - **Rich text (`--rich`):** `**bold**`, `*italic*`, `__underline__`, `# headings` typed with real Word/Docs formatting
 - **Table fill (`--csv`):** fills forms and tables cell by cell with Tab/Enter navigation
+- **Background mode (`--bg`, Windows):** paste/type into an unfocused classic app while you work elsewhere
 
 ## Platform support
 
@@ -147,6 +148,32 @@ python main.py --csv data.csv
 python main.py --csv data.csv --row-key tab --csv-resume 3,1
 ```
 
+## Background mode (experimental, Windows, CLI-only)
+
+Delivers text into a window **without focusing it**, so you keep working
+elsewhere. Reuses every source above:
+
+```powershell
+python main.py --bg "Notepad" --file note.txt      # instant paste
+python main.py --bg "Word" --rich --file doc.txt   # formatted paste (bold, tables)
+python main.py --bg "Word" --csv data.csv      # CSV -> HTML table paste
+python main.py --bg "Notepad" --bg-human --file note.txt  # paced keystrokes
+python main.py --bg-pid 12345 --file note.txt      # precise PID targeting
+```
+
+How it works: the target is resolved to its edit control, the payload goes
+on the clipboard (your text clipboard is saved and restored), and a `WM_PASTE`
+message is posted to its queue. `--bg-human` instead posts paced `WM_CHAR`
+keystrokes (plain text, resumable, never touches the clipboard).
+
+Honest limits (platform-enforced):
+- Classic apps only: Notepad, WordPad, Word. **Browsers, Discord, VS Code,
+  and Electron apps do not honor background paste — use normal mode there.**
+- Click to position the caret first; minimized windows may swallow the paste.
+- Ambiguous window titles are refused (you'll get the candidate list) —
+  use a fuller title or `--bg-pid`.
+- Only BMP characters travel over `WM_CHAR`; astral characters become `?`.
+
 ## Project layout
 
 ```
@@ -163,6 +190,7 @@ core/profiles.py           presets
 core/inputs.py             clipboard/file/string sources
 core/richtext.py           **bold**/*italic*/# heading markup parser
 core/tables.py             CSV table-fill driver (Tab/Enter nav)
+core/background.py         focus-free delivery: HWND lock, HTML clipboard, WM_PASTE/WM_CHAR
 assets/                    generated icon.ico/.png
 tests/                     pytest suite (mocked keyboard — no real keypresses)
 ```
