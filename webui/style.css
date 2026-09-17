@@ -70,9 +70,19 @@ body {
 }
 
 .mark-glyph {
-  font-size: 20px;
-  color: var(--brass);
+  font-size: 22px;
   line-height: 1;
+  display: inline-block;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mark-glyph {
+    animation: ghost-float 3.2s ease-in-out infinite;
+  }
+  @keyframes ghost-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-4px); }
+  }
 }
 
 .mark-word {
@@ -323,6 +333,16 @@ body {
 .start-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .start-btn:disabled { background: var(--line); color: var(--ink-faint); cursor: not-allowed; }
 
+@media (prefers-reduced-motion: no-preference) {
+  .start-btn.is-running {
+    animation: brass-breathe 1.6s ease-in-out infinite;
+  }
+  @keyframes brass-breathe {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(201, 138, 75, 0.0); }
+    50%      { box-shadow: 0 0 18px 2px rgba(201, 138, 75, 0.45); }
+  }
+}
+
 .pause-btn, .stop-btn {
   background: transparent;
   border: 1px solid var(--line);
@@ -362,6 +382,44 @@ body {
   width: 0%;
   background: linear-gradient(90deg, var(--brass-dim), var(--brass-hi));
   transition: width 0.2s linear;
+  position: relative;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .paper-feed-fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.25) 50%, transparent 80%);
+    animation: feed-shimmer 1.4s linear infinite;
+  }
+  @keyframes feed-shimmer {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(100%); }
+  }
+}
+
+.typed-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  background: var(--bg-well);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 10px 0 0;
+  max-height: 96px;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.typed-preview .done-part { color: var(--ink-faint); }
+.typed-preview .caret-part {
+  color: var(--brass-hi);
+  border-left: 2px solid var(--brass-hi);
+  padding-left: 1px;
 }
 
 .status-line {

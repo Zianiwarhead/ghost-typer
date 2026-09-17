@@ -1,5 +1,6 @@
 """Polish flow, study loop, notes file, dry-run disclosure."""
 import argparse
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -62,6 +63,15 @@ def test_polish_backend_validation_and_local_error():
         brain_mod.polish_text("x", backend='nope', api_key="k")
     with pytest.raises(RuntimeError, match='--brain-key'):
         brain_mod.polish_text("x", backend='api', api_key='')
+    with mock.patch.object(brain_mod, "local_ready", return_value=(False, "nope")), \
+            pytest.raises(RuntimeError, match='nope'):
+        brain_mod.polish_text("x", backend='local')
+
+
+def test_local_setup_checked_before_heavy_imports(monkeypatch):
+    # Regression: CI has no numpy; setup must be checked BEFORE importing it,
+    # or this raises ModuleNotFoundError instead of the helpful RuntimeError.
+    monkeypatch.setitem(sys.modules, 'numpy', None)
     with mock.patch.object(brain_mod, "local_ready", return_value=(False, "nope")), \
             pytest.raises(RuntimeError, match='nope'):
         brain_mod.polish_text("x", backend='local')

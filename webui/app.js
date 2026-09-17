@@ -23,6 +23,7 @@ const pauseBtn        = el("pauseBtn");
 const stopBtn         = el("stopBtn");
 const progressFill    = el("progressFill");
 const statusLine      = el("statusLine");
+const typedPreview    = el("typedPreview");
 const advancedToggle  = el("advancedToggle");
 const advancedPanel   = el("advancedPanel");
 const chatModeToggle  = el("chatModeToggle");
@@ -78,9 +79,19 @@ wpmSlider.addEventListener("input", () => {
 
 function updateStats() {
   const n = textInput.value.length;
-  textStats.textContent = n === 0 ? "0 characters" : `${n.toLocaleString()} characters`;
+  if (n === 0) {
+    textStats.textContent = "0 characters";
+    return;
+  }
+  const words = textInput.value.trim().split(/\s+/).length;
+  const wpm = parseInt(wpmSlider.value, 10) || 65;
+  const secs = Math.max(1, Math.round(((n / 5) / wpm) * 60));
+  const eta = secs < 60 ? `~${secs}s` : `~${Math.floor(secs / 60)}m ${secs % 60}s`;
+  textStats.textContent =
+    `${n.toLocaleString()} characters · ${words.toLocaleString()} words · ${eta} at ${wpm} wpm`;
 }
 textInput.addEventListener("input", updateStats);
+wpmSlider.addEventListener("input", updateStats);
 
 pasteBtn.addEventListener("click", async () => {
   try {
@@ -183,11 +194,15 @@ stopBtn.addEventListener("click", async () => {
 
 function setRunningUI(running) {
   startBtn.disabled = running;
+  startBtn.classList.toggle("is-running", running);
   pauseBtn.disabled = !running;
   stopBtn.disabled = !running;
   textInput.disabled = running;
   feelSelect.querySelectorAll("button").forEach((b) => (b.disabled = running));
   wpmSlider.disabled = running;
+  if (!running) {
+    typedPreview.hidden = true;
+  }
 }
 
 function startPolling() {
@@ -214,6 +229,7 @@ async function pollStatus() {
 
   if (s.typing) {
     statusLine.textContent = s.message || `Typing… ${s.index}/${s.total} characters`;
+    renderTypedPreview(s.index || 0);
   } else {
     stopPolling();
     setRunningUI(false);
@@ -223,6 +239,26 @@ async function pollStatus() {
     startBtn.querySelector(".start-btn-label").textContent = hasResumeAvailable ? "Resume" : "Start";
     statusLine.textContent = s.message || (hasResumeAvailable ? "Stopped — press Resume to continue." : "Done.");
   }
+}
+
+// Live "what's been typed" preview: done text dimmed, brass caret, what's next.
+function renderTypedPreview(index) {
+  const full = textInput.value;
+  if (!full) {
+    typedPreview.hidden = true;
+    return;
+  }
+  const done = full.slice(0, index);
+  const next = full.slice(index, index + 60).split("\n")[0];
+  typedPreview.textContent = "";
+  const doneSpan = document.createElement("span");
+  doneSpan.className = "done-part";
+  doneSpan.textContent = done.length > 80 ? "…" + done.slice(-80) : done;
+  const caretSpan = document.createElement("span");
+  caretSpan.className = "caret-part";
+  caretSpan.textContent = next || "✓";
+  typedPreview.append(doneSpan, caretSpan);
+  typedPreview.hidden = false;
 }
 
 // ---------------- init ---------------- //

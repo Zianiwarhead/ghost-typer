@@ -128,10 +128,10 @@ def download_model() -> str:
 
 
 def _local_complete(system: str, user_text: str, max_tokens: int) -> str:
-    import numpy as np
     ready, reason = local_ready()
     if not ready:
         raise RuntimeError(f"local brain not set up: {reason}")
+    import numpy as np
     import onnxruntime as ort
     from tokenizers import Tokenizer
     dest = model_dir()
