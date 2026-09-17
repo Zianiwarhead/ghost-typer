@@ -1,6 +1,6 @@
 [project]
 name = "ghost-typer"
-version = "2.9.0"
+version = "2.10.0"
 description = "Realistic human-like keystroke simulation with Tk mini-GUI (Windows, macOS, Linux/SteamOS)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,12 +28,14 @@ dependencies = [
 dev = ["pytest>=8.0", "ruff>=0.4.0"]
 brain = ["onnxruntime>=1.18", "tokenizers>=0.19"]
 gui = []
+webui = ["pywebview>=5.0"]
 
 [project.scripts]
 ghosttyper = "main:main"
+ghosttyper-web = "webapp:main"
 
 [tool.setuptools]
-py-modules = ["main", "gui"]
+py-modules = ["main", "gui", "webapp"]
 packages = ["core"]
 
 [tool.ruff]

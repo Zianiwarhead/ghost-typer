@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ghost Typer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="app-header">
+    <div class="mark">
+      <span class="mark-glyph">◌</span>
+      <span class="mark-word">Ghost Typer</span>
+    </div>
+    <button class="advanced-toggle" id="advancedToggle" aria-expanded="false" aria-controls="advancedPanel">
+      Advanced options
+    </button>
+  </header>
+
+  <main class="deck">
+
+    <!-- Step 1: text -->
+    <section class="step" data-step="1">
+      <div class="step-rail">
+        <span class="step-dot"></span>
+        <span class="step-line"></span>
+      </div>
+      <div class="step-body">
+        <h2 class="step-title">What should it type?</h2>
+        <div class="text-well">
+          <textarea id="textInput" placeholder="Paste or type text here…" spellcheck="false"></textarea>
+          <div class="text-well-actions">
+            <button class="ghost-btn" id="pasteBtn" type="button">Paste clipboard</button>
+            <button class="ghost-btn" id="loadFileBtn" type="button">Load .txt / .md file</button>
+            <button class="ghost-btn subtle" id="clearBtn" type="button">Clear</button>
+          </div>
+        </div>
+        <p class="hint" id="textStats">0 characters</p>
+      </div>
+    </section>
+
+    <!-- Step 2: feel -->
+    <section class="step" data-step="2">
+      <div class="step-rail">
+        <span class="step-dot"></span>
+        <span class="step-line"></span>
+      </div>
+      <div class="step-body">
+        <h2 class="step-title">How should it feel?</h2>
+        <div class="feel-select" id="feelSelect" role="radiogroup" aria-label="Typing feel">
+          <!-- populated by app.js -->
+        </div>
+        <div class="wpm-row">
+          <label for="wpmSlider">Fine-tune speed</label>
+          <input type="range" id="wpmSlider" min="10" max="300" value="65">
+          <span class="wpm-value" id="wpmValue">65 wpm</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 3: go -->
+    <section class="step" data-step="3">
+      <div class="step-rail">
+        <span class="step-dot"></span>
+      </div>
+      <div class="step-body">
+        <h2 class="step-title">Click your target, then go</h2>
+        <p class="hint">
+          Click into the window or text box you want typed into. Ghost Typer waits
+          <span id="countdownLabel">5s</span> before it starts, so you have time to switch over.
+        </p>
+
+        <div class="countdown-row">
+          <label for="countdownInput">Countdown</label>
+          <input type="number" id="countdownInput" min="2" max="15" value="5">
+          <span>seconds</span>
+        </div>
+
+        <div class="controls">
+          <button class="start-btn" id="startBtn" type="button">
+            <span class="start-btn-label">Start</span>
+          </button>
+          <button class="pause-btn" id="pauseBtn" type="button" disabled>Pause</button>
+          <button class="stop-btn" id="stopBtn" type="button" disabled>Stop</button>
+        </div>
+
+        <div class="progress-wrap" id="progressWrap" aria-hidden="true">
+          <div class="paper-feed">
+            <div class="paper-feed-fill" id="progressFill"></div>
+          </div>
+          <p class="status-line" id="statusLine">Paste text, pick a feel, press Start.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Advanced drawer -->
+  <aside class="advanced-panel" id="advancedPanel" hidden>
+    <h3>Advanced</h3>
+
+    <label class="switch-row">
+      <span>Chat mode <small>(Shift+Enter for newlines — Claude, ChatGPT, Discord)</small></span>
+      <input type="checkbox" id="chatModeToggle">
+    </label>
+
+    <label class="switch-row">
+      <span>Focus lock <small>(auto-pause if you switch windows)</small></span>
+      <input type="checkbox" id="focusLockToggle" checked>
+    </label>
+
+    <div class="env-check">
+      <button class="ghost-btn subtle" id="doctorBtn" type="button">Check my system</button>
+      <pre class="env-output" id="doctorOutput" hidden></pre>
+    </div>
+
+    <p class="hint small">
+      Rich-text formatting, table fill, background typing, and remote/phone control
+      are still CLI-only for now — see the README.
+    </p>
+  </aside>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

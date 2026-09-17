@@ -6,7 +6,7 @@ Type like a human, not a robot. Paste text anywhere and Ghost Typer re-types it
 with human rhythm: bursts, pauses, typos + corrections, fatigue, and a
 mechanical typewriter mode.
 
-Windows, macOS, and Linux (incl. SteamOS desktop mode). CLI + Tk mini-GUI.
+Windows, macOS, and Linux (incl. SteamOS desktop mode). CLI + Tk mini-GUI + optional desktop Web UI.
 MIT open source — use it, share it, be happy.
 
 > **Fair-use note:** built for demos, accessibility, typing effects, and content
@@ -281,6 +281,8 @@ still stands: nothing here is for proctored tests or hiring screens.
 ```
 main.py                    CLI + --gui launcher
 gui.py                     Tk mini-GUI
+webapp.py                  desktop Web UI entry point (pywebview, optional)
+webui/                     Web UI frontend (index.html + style.css + app.js)
 core/engine.py             keystroke simulation, mechanical timing
 core/controller.py         hotkeys, threads, soft-stop/resume, interference guard
 core/focus_guard.py        platform dispatcher — picks the backend below by OS
@@ -313,6 +315,21 @@ pytest -q
 ruff check .
 python tools\make_icon.py
 ```
+
+## Web UI (desktop, optional)
+
+A native-window frontend with its own look (typewriter ink + brass theme):
+paste/load text, five feel presets + WPM slider, countdown, start/pause/
+soft-stop/resume with live progress, plus chat-mode/focus-lock toggles and
+the system check under Advanced.
+
+```powershell
+pip install -e ".[webui]"
+python webapp.py   # or: ghosttyper-web
+```
+
+It drives the same `core/` engine as the CLI — no separate logic. Rich-text,
+CSV fill, background, and brain modes stay CLI-only for now.
 
 On headless Linux (including CI), `pynput` needs a live X display just to
 import — run tests under a virtual one: `sudo apt install xvfb && xvfb-run -a pytest -q`.
